@@ -14,8 +14,11 @@ from model.predictor import WaterDemandPredictor
 
 
 def main():
+    default_cons = ROOT / "data" / "Cooler_Water_Consumption_Record.csv"
+    if not default_cons.exists():
+        default_cons = ROOT / "data" / "Cooler_Water_Consumption_Record.xlsx"
     p = argparse.ArgumentParser()
-    p.add_argument("--consumption", type=Path, default=ROOT / "data" / "Cooler_Water_Consumption_Record.xlsx")
+    p.add_argument("--consumption", type=Path, default=default_cons)
     p.add_argument("--coolers", type=Path, default=ROOT / "data" / "cooler_config.csv")
     p.add_argument("--model-dir", type=Path, default=ROOT / "artifacts" / "models")
     p.add_argument("--train-catboost", action="store_true", help="Attempt CatBoost (needs enough rows)")

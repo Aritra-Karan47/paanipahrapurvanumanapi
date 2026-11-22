@@ -91,12 +91,11 @@ school-water-demand/
 ├── app.py                 # HF Space entrypoint
 ├── requirements.txt
 ├── pyproject.toml         # cooler-demand package
-├── data/                  # Synthetic demo data (NOT real training data)
-│   ├── Cooler_Water_Consumption_Record.xlsx
-│   ├── School_Timetable_Long_Format.xlsx
+├── data/                  # Institute demo & training data
+│   ├── Cooler_Water_Consumption_Record.csv
+│   ├── School_Timetable_With_Recess.xlsx
 │   ├── Water_Temperature_Control_Table.xlsx
 │   └── cooler_config.csv
-├── fixtures/              # CSV mirrors for unit tests
 ├── src/
 │   ├── cooler_demand/     # Installable SDK
 │   │   ├── client.py
