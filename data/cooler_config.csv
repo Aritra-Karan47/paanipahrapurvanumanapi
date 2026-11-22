@@ -1,0 +1,9 @@
+cooler_id,location,capacity_liters,floor,near_games
+Location01A,Block 1 Wing A,200,0,False
+Location01B,Block 1 Wing B,200,0,False
+Location02A,Block 2 Wing A,180,1,False
+Location02B,Block 2 Wing B,180,1,False
+Location03A,Block 3 Wing A,150,0,False
+Location03B,Block 3 Wing B,150,0,False
+Location04A,Sports Complex Side A,250,0,True
+Location04B,Sports Complex Side B,250,0,True

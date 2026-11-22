@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cooler-demand"
+version = "0.1.0"
+description = "School Water Cooler Demand Prediction SDK – communicates with Hugging Face inference service"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "School Water Demand Team"}]
+keywords = ["water", "demand", "prediction", "school", "cooler", "catboost"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.0",
+    "tenacity>=8.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+model = [
+    "catboost>=1.2",
+    "scikit-learn>=1.3",
+    "openpyxl>=3.1",
+    "gradio>=4.0",
+    "pyyaml>=6.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "httpx",
+]
+
+[project.urls]
+Homepage = "https://huggingface.co/spaces/school-water-demand"
+Repository = "https://github.com/example/school-water-demand"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["cooler_demand*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v --tb=short"
