@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .cache import compute_temp_band
+from .preprocessing import compute_active_students_in_zone
 
 
 DAY_MAP = {
@@ -56,6 +57,7 @@ def build_single_feature_row(
     capacity_liters: float = 200.0,
     floor: int = 0,
     near_games: bool = False,
+    active_students_in_zone: int = 240,
     hist_mean: Optional[float] = None,
     hist_std: Optional[float] = None,
     hist_count: int = 0,
@@ -84,6 +86,7 @@ def build_single_feature_row(
         "capacity_liters": capacity_liters,
         "floor": floor,
         "near_games": int(near_games),
+        "active_students_in_zone": int(active_students_in_zone),
         "hist_mean": hist_mean if hist_mean is not None else np.nan,
         "hist_std": hist_std if hist_std is not None else np.nan,
         "hist_count": hist_count,
@@ -98,13 +101,14 @@ def build_features(
     records: List[Dict[str, Any]],
     cooler_meta: Optional[Dict[str, Dict[str, Any]]] = None,
     historical_df: Optional[pd.DataFrame] = None,
+    timetable_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Build a feature DataFrame from a list of interval records.
 
     Each record should contain at least:
       cooler_id, day_of_week, period_slot, outdoor_temp_c
-    Optional: weather, games_intensity, duration_minutes, capacity_liters, floor, near_games
+    Optional: weather, games_intensity, duration_minutes, capacity_liters, floor, near_games, active_students_in_zone
     """
     cooler_meta = cooler_meta or {}
     rows = []
@@ -127,6 +131,18 @@ def build_features(
         slot = rec.get("period_slot", "P1")
         key = (cid, day, slot)
         hs = hist_stats.get(key, {})
+
+        if "active_students_in_zone" in rec and rec["active_students_in_zone"] is not None:
+            active_students = int(rec["active_students_in_zone"])
+        else:
+            active_students = compute_active_students_in_zone(
+                cooler_id=cid,
+                day_of_week=day,
+                period_slot=slot,
+                timetable_df=timetable_df,
+                cooler_meta=cooler_meta,
+            )
+
         row = build_single_feature_row(
             cooler_id=cid,
             day_of_week=day,
@@ -138,6 +154,7 @@ def build_features(
             capacity_liters=float(rec.get("capacity_liters", meta.get("capacity_liters", 200))),
             floor=int(rec.get("floor", meta.get("floor", 0))),
             near_games=bool(rec.get("near_games", meta.get("near_games", False))),
+            active_students_in_zone=active_students,
             hist_mean=hs.get("mean"),
             hist_std=hs.get("std"),
             hist_count=hs.get("count", 0),
@@ -165,6 +182,7 @@ def feature_columns(include_target: bool = False) -> List[str]:
         "capacity_liters",
         "floor",
         "near_games",
+        "active_students_in_zone",
         "hist_mean",
         "hist_std",
         "hist_count",

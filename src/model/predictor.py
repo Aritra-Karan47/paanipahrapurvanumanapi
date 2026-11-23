@@ -14,6 +14,14 @@ from .cache import PredictionCache, compute_temp_band
 from .catboost_model import CatBoostQuantileModel
 from .features import build_features, build_single_feature_row
 
+try:
+    from ..weather.service import get_slot_hourly_temperature
+except (ImportError, ValueError):
+    try:
+        from weather.service import get_slot_hourly_temperature
+    except ImportError:
+        from cooler_demand.weather.service import get_slot_hourly_temperature
+
 logger = logging.getLogger(__name__)
 
 MODEL_VERSION = "water-demand-v0.1.0-baseline"
@@ -40,6 +48,11 @@ class WaterDemandPredictor:
         self.cache = PredictionCache(maxsize=cache_maxsize, ttl_seconds=cache_ttl)
         self.prediction_cache = self.cache
 
+        # Auto-load pre-trained production CatBoost models on cold boot
+        if self.catboost.load():
+            self.version = "water-demand-v0.1.0-catboost"
+            logger.info("Loaded pre-trained production CatBoost models on startup (n=%d)", self.catboost.n_train)
+
     def load_cooler_meta(self, meta: Dict[str, Dict[str, Any]]) -> None:
         self.cooler_meta = meta
         self.baseline._cooler_meta = meta
@@ -58,8 +71,8 @@ class WaterDemandPredictor:
         info = {
             "baseline_fitted": True,
             "baseline_n": len(df),
-            "catboost_trained": False,
-            "catboost_n": 0,
+            "catboost_trained": self.catboost.trained,
+            "catboost_n": self.catboost.n_train,
         }
         if train_catboost:
             feat_df = build_features(
@@ -73,6 +86,8 @@ class WaterDemandPredictor:
             if ok:
                 self.catboost.save()
                 self.version = "water-demand-v0.1.0-catboost"
+        elif self.catboost.trained:
+            self.version = "water-demand-v0.1.0-catboost"
         return info
 
     def _resolve_model_preference(self, preference: str) -> str:
@@ -97,11 +112,13 @@ class WaterDemandPredictor:
         weather: str = "Unknown",
         model_preference: str = "auto",
         use_cache: bool = True,
+        hourly_forecast: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Predict for a list of interval dicts (period_slot, day_of_week, ...).
 
         Checks in-memory TTL/LRU cache for (cooler_id, day_of_week, temp_band, slot_tuple)
         to deliver instant response times (< 2 ms) on repeated calls.
+        Maps each period slot to its respective hourly forecasted temperature.
         """
         day_of_week = intervals[0].get("day_of_week", "Monday") if intervals else "Monday"
         temp_band = compute_temp_band(outdoor_temp_c)
@@ -117,11 +134,20 @@ class WaterDemandPredictor:
         meta = self.cooler_meta.get(cooler_id, {})
         records = []
         for iv in intervals:
+            slot = iv["period_slot"]
+            if "outdoor_temp_c" in iv and iv["outdoor_temp_c"] is not None:
+                slot_temp = float(iv["outdoor_temp_c"])
+            else:
+                slot_temp = get_slot_hourly_temperature(
+                    period_slot=slot,
+                    base_temp_c=outdoor_temp_c,
+                    hourly_forecast=hourly_forecast,
+                )
             rec = {
                 "cooler_id": cooler_id,
                 "day_of_week": iv.get("day_of_week", "Monday"),
-                "period_slot": iv["period_slot"],
-                "outdoor_temp_c": outdoor_temp_c,
+                "period_slot": slot,
+                "outdoor_temp_c": slot_temp,
                 "weather": weather,
                 "games_intensity": iv.get("games_intensity", "None"),
                 "duration_minutes": iv.get("duration_minutes", 40),
@@ -129,6 +155,8 @@ class WaterDemandPredictor:
                 "floor": meta.get("floor", 0),
                 "near_games": meta.get("near_games", False),
             }
+            if "active_students_in_zone" in iv:
+                rec["active_students_in_zone"] = iv["active_students_in_zone"]
             records.append(rec)
 
         if model_kind == "catboost" and self.catboost.trained:
