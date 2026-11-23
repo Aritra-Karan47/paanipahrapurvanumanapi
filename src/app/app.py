@@ -531,7 +531,6 @@ def _attach_api(blocks: gr.Blocks) -> None:
         logger.warning("Could not attach FastAPI routes (UI-only mode): %s", exc)
 
 
-_attach_api(demo)
-
 if __name__ == "__main__":
+    _attach_api(demo)
     demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))

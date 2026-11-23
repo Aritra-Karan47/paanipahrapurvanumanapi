@@ -1,8 +1,11 @@
 """
-Hugging Face Space entrypoint.
-Simply launches the Gradio app defined under src/app/app.py.
+Application entrypoint.
+Exports the FastAPI app for FastAPI Cloud / Uvicorn and demo for Gradio / Hugging Face.
 """
-from src.app.app import demo
+import os
+import uvicorn
+from main import app, demo
 
 if __name__ == "__main__":
-    demo.launch()
+    port = int(os.environ.get("PORT", 7860))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
