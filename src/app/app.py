@@ -277,13 +277,11 @@ def ui_detect_weather(city: str, force_refresh: bool = False):
 
     if res.get("cached"):
         age_str = f"Cached ({res.get('cache_age_hours', 0)}h old, valid for {res.get('cache_ttl_remaining_hours', 8)}h)"
-        badge = "🟢"
     else:
-        badge = "⚡"
         age_str = "Freshly fetched from Open-Meteo (8-hour cache initialized)"
 
     status_md = (
-        f"**{badge} Live Weather Detected**: **{temp} °C**, **{cond}** ({res.get('humidity_pct', 50)}% humidity)\n\n"
+        f"**Live Weather Detected**: **{temp} °C**, **{cond}** ({res.get('humidity_pct', 50)}% humidity)\n\n"
         f"• **Location**: {loc}\n"
         f"• **Source**: {res.get('source', 'Open-Meteo')}\n"
         f"• **Base Station**: {st_info}\n"
@@ -389,11 +387,11 @@ with gr.Blocks(title="School Water Demand Prediction") as demo:
                 value="P1,P2,P3,P4,Recess,P5,P6,P7,P8",
                 label="Period slots (comma-separated)",
             )
-        with gr.Accordion("🌐 Auto-Detect Live Weather (Open-Meteo · Nearest Base Station · 8h Cache)", open=True):
+        with gr.Accordion("Auto-Detect Live Weather (Open-Meteo · Nearest Base Station · 8h Cache)", open=True):
             with gr.Row():
                 weather_city = gr.Textbox(value="New Delhi", label="School City / Location", scale=3)
-                detect_btn = gr.Button("📍 Detect Weather (8h Cache)", variant="secondary", scale=2)
-                force_btn = gr.Button("🔄 Force Refresh API", variant="outline", scale=1)
+                detect_btn = gr.Button("Detect Weather (8h Cache)", variant="secondary", scale=2)
+                force_btn = gr.Button("Force Refresh API", variant="outline", scale=1)
             weather_status = gr.Markdown(
                 "_Click **Detect Weather** to auto-set the slider from Open-Meteo's nearest base station, or adjust manually below._"
             )
@@ -428,7 +426,7 @@ with gr.Blocks(title="School Water Demand Prediction") as demo:
     with gr.Tab("Temperature Target"):
         with gr.Row():
             t_city = gr.Textbox(value="New Delhi", label="School Location", scale=3)
-            t_detect_btn = gr.Button("📍 Apply Live Temp (Open-Meteo)", scale=2)
+            t_detect_btn = gr.Button("Apply Live Temp (Open-Meteo)", scale=2)
         t_in = gr.Slider(-10, 50, value=30, step=0.5, label="Outdoor temperature (°C)")
         t_btn = gr.Button("Get target water temperature", variant="primary")
         t_out = gr.Markdown()
