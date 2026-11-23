@@ -113,3 +113,54 @@ def test_all_eight_coolers_service():
         out = service_forecast_day(_base_payload(cooler_id=cid, capacity=cap, near=near))
         assert out["cooler_id"] == cid
         assert len(out["predictions"]) == 9
+
+
+def test_api_predict_and_forecast_day_endpoints():
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app_module.demo.app)
+    payload = _base_payload()
+
+    # /api/predict wrapped in threadpool
+    resp_predict = client.post("/api/predict", json=payload)
+    assert resp_predict.status_code == 200
+    pred_data = resp_predict.json()
+    assert "predictions" in pred_data
+    assert pred_data["total_expected_liters"] > 0
+    assert pred_data["cooler_id"] == "Location01A"
+
+    # /api/forecast_day wrapped in threadpool
+    resp_forecast = client.post("/api/forecast_day", json=payload)
+    assert resp_forecast.status_code == 200
+    forecast_data = resp_forecast.json()
+    assert "shortage" in forecast_data
+    assert forecast_data["shortage"]["risk_level"] in ("none", "low", "medium", "high", "critical")
+
+
+def test_api_concurrent_requests():
+    from concurrent.futures import ThreadPoolExecutor
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app_module.demo.app)
+    payload = _base_payload()
+
+    def run_predict(i):
+        res = client.post("/api/predict", json=payload)
+        return res.status_code, res.json()["cooler_id"]
+
+    def run_forecast(i):
+        res = client.post("/api/forecast_day", json=payload)
+        return res.status_code, res.json()["shortage"]["risk_level"]
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        predict_futures = list(executor.map(run_predict, range(5)))
+        forecast_futures = list(executor.map(run_forecast, range(5)))
+
+    for status, cooler_id in predict_futures:
+        assert status == 200
+        assert cooler_id == "Location01A"
+
+    for status, risk_level in forecast_futures:
+        assert status == 200
+        assert risk_level in ("none", "low", "medium", "high", "critical")
+
