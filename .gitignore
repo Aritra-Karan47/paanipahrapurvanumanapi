@@ -11,6 +11,7 @@ venv/
 .coverage
 htmlcov/
 artifacts/models/*.cbm
+artifacts/*.json
 *.log
 .DS_Store
 .idea/
