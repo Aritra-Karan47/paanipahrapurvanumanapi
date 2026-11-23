@@ -209,3 +209,23 @@ class ModelInfo(BaseModel):
     supported_slots: List[str]
     temperature_rules_loaded: bool
     notes: List[str] = Field(default_factory=list)
+
+
+class LiveWeatherRequest(BaseModel):
+    city: Optional[str] = "New Delhi"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class LiveWeatherResponse(BaseModel):
+    success: bool
+    outdoor_temp_c: float
+    weather: str
+    humidity_pct: float
+    weather_code: int = 0
+    location_name: str
+    latitude: float
+    longitude: float
+    source: str
+    message: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -25,6 +25,8 @@ from .schemas import (
     TemperatureTargetResponse,
     ValidateDataRequest,
     ValidateDataResponse,
+    LiveWeatherRequest,
+    LiveWeatherResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,3 +219,24 @@ class CoolerDemandClient:
         except Exception:
             raw = self._call_gradio("model_info", [])
         return ModelInfo.model_validate(raw)
+
+    def get_live_weather(
+        self,
+        city: Optional[str] = "New Delhi",
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> LiveWeatherResponse:
+        """Detect live outdoor weather and temperature via free API."""
+        payload = LiveWeatherRequest(
+            city=city, latitude=latitude, longitude=longitude
+        ).model_dump(mode="json")
+        try:
+            raw = self._post("/api/live_weather", payload)
+        except CoolerDemandError:
+            try:
+                raw = self._call_gradio("live_weather", [payload])
+            except Exception:
+                # Direct fallback via local weather module if service endpoint is unreachable
+                from weather.service import fetch_live_weather
+                raw = fetch_live_weather(city=city, lat=latitude, lon=longitude)
+        return LiveWeatherResponse.model_validate(raw)

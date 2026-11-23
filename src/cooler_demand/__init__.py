@@ -14,6 +14,8 @@ from .schemas import (
     ValidateDataResponse,
     IntervalPrediction,
     ModelInfo,
+    LiveWeatherRequest,
+    LiveWeatherResponse,
 )
 
 __version__ = "0.1.0"
@@ -31,5 +33,7 @@ __all__ = [
     "ValidateDataResponse",
     "IntervalPrediction",
     "ModelInfo",
+    "LiveWeatherRequest",
+    "LiveWeatherResponse",
     "__version__",
 ]
