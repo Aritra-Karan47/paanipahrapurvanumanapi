@@ -83,7 +83,9 @@ def bootstrap() -> None:
         else:
             logger.warning("No consumption record found – using engineered defaults only")
 
-        temp_path = DATA_DIR / "Water_Temperature_Control_Table.xlsx"
+        temp_path = DATA_DIR / "Water_Temperature_Control_Table.parquet"
+        if not temp_path.exists():
+            temp_path = DATA_DIR / "Water_Temperature_Control_Table.xlsx"
         if temp_path.exists():
             temp_ctrl.load_from_file(temp_path)
             logger.info("Temperature control table loaded from %s", temp_path)
@@ -539,6 +541,7 @@ def _attach_api(blocks: gr.Blocks) -> None:
         logger.warning("Could not attach FastAPI routes (UI-only mode): %s", exc)
 
 
+_attach_api(demo)
+
 if __name__ == "__main__":
-    _attach_api(demo)
     demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
