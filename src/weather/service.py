@@ -37,6 +37,101 @@ DEFAULT_LON = 77.2090
 CACHE_FILE_PATH = Path(__file__).resolve().parents[2] / "artifacts" / "weather_cache.json"
 
 
+# School timetable slot schedules and start times
+PERIOD_START_TIMES: Dict[str, str] = {
+    "P1": "08:00",
+    "P2": "08:45",
+    "P3": "09:30",
+    "P4": "10:15",
+    "Recess": "11:00",
+    "P5": "11:30",
+    "P6": "12:15",
+    "P7": "13:00",
+    "P8": "13:45",
+}
+
+PERIOD_START_HOURS: Dict[str, int] = {
+    "P1": 8,       # 08:00 AM (cooler morning)
+    "P2": 9,       # 09:00 AM
+    "P3": 10,      # 10:00 AM
+    "P4": 11,      # 11:00 AM
+    "Recess": 11,  # 11:30 AM
+    "P5": 12,      # 12:00 PM
+    "P6": 13,      # 01:30 PM (peak afternoon heat)
+    "P7": 14,      # 02:00 PM
+    "P8": 15,      # 03:00 PM
+}
+
+# Realistic intra-day offset from base temperature (°C):
+# Early morning (8:00 AM, P1) is significantly cooler; afternoon (1:30 PM, P6) reaches peak heat.
+DIURNAL_TEMP_OFFSETS: Dict[str, float] = {
+    "P1": -6.0,     # 08:00 AM (e.g. 22°C when peak is 30°C / base is 28°C)
+    "P2": -4.2,     # 08:45 AM
+    "P3": -2.8,     # 09:30 AM
+    "P4": -1.5,     # 10:15 AM
+    "Recess": -0.5, # 11:00 AM
+    "P5": +0.8,     # 11:30 AM / 12:00 PM
+    "P6": +3.0,     # 01:30 PM (peak heat)
+    "P7": +2.2,     # 02:00 PM
+    "P8": +1.0,     # 03:00 PM
+}
+
+
+def diurnal_temperature_for_slot(base_temp_c: float, period_slot: str) -> float:
+    """Derive realistic intra-day temperature for a school period based on typical diurnal progression."""
+    slot = str(period_slot).strip()
+    offset = DIURNAL_TEMP_OFFSETS.get(slot, 0.0)
+    return round(float(base_temp_c) + offset, 1)
+
+
+def get_slot_hourly_temperature(
+    period_slot: str,
+    base_temp_c: float,
+    hourly_forecast: Optional[Dict[str, Any]] = None,
+    target_date: Optional[str] = None,
+) -> float:
+    """Map a period slot's start time to its respective hourly forecasted temperature.
+
+    If Open-Meteo hourly forecast is provided, looks up the forecasted temperature
+    at the slot's start hour (e.g., 08:00 for P1, 13:00 for P6).
+    Otherwise, applies the realistic diurnal progression curve.
+    """
+    slot = str(period_slot).strip()
+    hour = PERIOD_START_HOURS.get(slot)
+    if hour is None:
+        return round(float(base_temp_c), 1)
+
+    if hourly_forecast and isinstance(hourly_forecast, dict):
+        times = hourly_forecast.get("time", [])
+        temps = hourly_forecast.get("temperature_2m", [])
+        if times and temps and len(times) == len(temps):
+            hour_str = f"T{hour:02d}:00"
+            for t_str, val in zip(times, temps):
+                if target_date and not str(t_str).startswith(target_date):
+                    continue
+                if hour_str in str(t_str):
+                    try:
+                        return round(float(val), 1)
+                    except (TypeError, ValueError):
+                        pass
+
+    return diurnal_temperature_for_slot(base_temp_c, slot)
+
+
+def map_period_hourly_temperatures(
+    base_temp_c: float,
+    hourly_forecast: Optional[Dict[str, Any]] = None,
+    slots: Optional[List[str]] = None,
+    target_date: Optional[str] = None,
+) -> Dict[str, float]:
+    """Map all given period slots to their hourly forecasted temperatures."""
+    target_slots = slots or ["P1", "P2", "P3", "P4", "Recess", "P5", "P6", "P7", "P8"]
+    return {
+        s: get_slot_hourly_temperature(s, base_temp_c, hourly_forecast, target_date)
+        for s in target_slots
+    }
+
+
 def _wmo_code_to_condition(code: int, humidity: Optional[float] = None) -> str:
     """Map WMO weather code to standard condition: Clear | Cloudy | Rainy | Humid | Unknown."""
     if code == 0:
@@ -206,6 +301,7 @@ def fetch_live_weather(
                     "latitude": lat,
                     "longitude": lon,
                     "current": "temperature_2m,relative_humidity_2m,weather_code",
+                    "hourly": "temperature_2m,relative_humidity_2m,weather_code",
                     "timezone": "auto",
                 },
             )
@@ -216,6 +312,14 @@ def fetch_live_weather(
                 humidity = float(current.get("relative_humidity_2m", 50.0))
                 code = int(current.get("weather_code", 0))
                 condition = _wmo_code_to_condition(code, humidity=humidity)
+
+                hourly = data.get("hourly", {})
+                hourly_forecast = {
+                    "time": hourly.get("time", []),
+                    "temperature_2m": hourly.get("temperature_2m", []),
+                    "relative_humidity_2m": hourly.get("relative_humidity_2m", []),
+                    "weather_code": hourly.get("weather_code", []),
+                }
 
                 # Station metadata resolved by Open-Meteo
                 st_lat = data.get("latitude", lat)
@@ -229,6 +333,7 @@ def fetch_live_weather(
                     "weather": condition,
                     "humidity_pct": round(humidity, 1),
                     "weather_code": code,
+                    "hourly_forecast": hourly_forecast,
                     "location_name": resolved_name,
                     "station_info": station_info,
                     "latitude": lat,
@@ -252,6 +357,7 @@ def fetch_live_weather(
         "weather": "Clear",
         "humidity_pct": 50.0,
         "weather_code": 0,
+        "hourly_forecast": None,
         "location_name": resolved_name,
         "station_info": f"Default coordinates: {lat:.2f}°N, {lon:.2f}°E",
         "latitude": lat,

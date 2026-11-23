@@ -1,0 +1,32 @@
+{
+  "n_train": 2160,
+  "feature_cols": [
+    "day_idx",
+    "slot_idx",
+    "is_recess",
+    "is_games",
+    "is_period",
+    "games_intensity",
+    "duration_minutes",
+    "outdoor_temp_c",
+    "temp_band",
+    "weather_code",
+    "capacity_liters",
+    "floor",
+    "near_games",
+    "active_students_in_zone",
+    "hist_mean",
+    "hist_std",
+    "hist_count",
+    "games_x_near",
+    "temp_x_recess"
+  ],
+  "metrics": {
+    "holdout_mae": 0.9187,
+    "holdout_mape_pct": 16.89,
+    "holdout_coverage_p90_pct": 90.97,
+    "p90_calibration_offset": 0.1969
+  },
+  "model_version": "water-demand-v0.1.0-catboost",
+  "trained_on": "Cooler_Water_Consumption_Record.csv (5 weeks, 2160 rows)"
+}

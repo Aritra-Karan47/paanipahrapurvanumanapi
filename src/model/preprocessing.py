@@ -398,6 +398,159 @@ def games_load_by_day_period(timetable: pd.DataFrame) -> Dict[Tuple[str, str], i
     return g.groupby(["day_of_week", "period_slot"]).size().to_dict()
 
 
+# Cooler to classroom section mapping across building wings:
+# Block 1: Classes 1 to 5 (15 sections: 1-A to 5-C)
+# Block 2: Classes 6 to 8 (12 sections: 6-A to 8-D)
+# Block 3: Classes 9 to 12 (16 sections: 9-A to 12-D)
+# Sports Complex (Location04A, Location04B): Dynamic footfall of sections having Games
+DEFAULT_COOLER_SECTIONS: Dict[str, List[str]] = {
+    "Location01A": ["1-A", "1-B", "2-A", "2-B", "3-A", "3-B", "4-A", "4-B"],
+    "Location01B": ["1-C", "2-C", "3-C", "4-C", "5-A", "5-B", "5-C"],
+    "Location02A": ["6-A", "6-B", "7-A", "7-B", "8-A", "8-B"],
+    "Location02B": ["6-C", "6-D", "7-C", "7-D", "8-C", "8-D"],
+    "Location03A": ["9-A", "9-B", "10-A", "10-B", "11-A", "11-B", "12-A", "12-B"],
+    "Location03B": ["9-C", "9-D", "10-C", "10-D", "11-C", "11-D", "12-C", "12-D"],
+}
+
+_DEFAULT_TIMETABLE_CACHE: Optional[pd.DataFrame] = None
+_CACHED_DENSITY_MAP: Optional[Dict[Tuple[str, str, str], int]] = None
+
+
+def get_default_timetable(data_dir: Optional[Union[str, Path]] = None) -> Optional[pd.DataFrame]:
+    """Retrieve and cache default school timetable."""
+    global _DEFAULT_TIMETABLE_CACHE
+    if _DEFAULT_TIMETABLE_CACHE is not None:
+        return _DEFAULT_TIMETABLE_CACHE
+
+    d = Path(data_dir) if data_dir else Path(__file__).resolve().parents[2] / "data"
+    pq_path = d / "School_Timetable_With_Recess.parquet"
+    xlsx_path = d / "School_Timetable_With_Recess.xlsx"
+
+    target = pq_path if pq_path.exists() else (xlsx_path if xlsx_path.exists() else None)
+    if target:
+        try:
+            _DEFAULT_TIMETABLE_CACHE = load_timetable(target)
+            return _DEFAULT_TIMETABLE_CACHE
+        except Exception as exc:
+            logger.warning("Could not load default timetable from %s: %s", target, exc)
+    return None
+
+
+def compute_active_students_in_zone(
+    cooler_id: str,
+    day_of_week: str,
+    period_slot: str,
+    timetable_df: Optional[pd.DataFrame] = None,
+    cooler_meta: Optional[Dict[str, Any]] = None,
+    students_per_section: int = 40,
+) -> int:
+    """Compute active student count per period in each building wing / cooler zone.
+
+    - For Sports Complex coolers (near_games=True or Location04A/B):
+      Calculates the active count of students who have Games scheduled in this slot
+      (e.g., counting how many sections have Games during Period 3).
+      During Recess, includes campus-wide outdoor surge (~20% of student body).
+    - For Academic Block coolers (Location01A-03B / classroom wings):
+      Calculates resident section count minus sections away attending Games.
+      During Recess, full wing capacity is active on break.
+    """
+    day = normalize_day(day_of_week)
+    slot = normalize_period(period_slot)
+
+    tt = timetable_df if timetable_df is not None else get_default_timetable()
+
+    cid = str(cooler_id).strip()
+    meta = cooler_meta.get(cid, {}) if cooler_meta else {}
+    near_games = meta.get("near_games", False)
+    if not near_games and cid.startswith("Location04"):
+        near_games = True
+
+    total_sections = tt["class_name"].nunique() if tt is not None else 43
+
+    if slot == "Recess":
+        if near_games:
+            # During Recess, playground / sports complex footfall surges (~20% of school)
+            recess_sections = max(2, int(round(total_sections * 0.20)))
+            return recess_sections * students_per_section
+        else:
+            # Academic wing: all assigned resident students are present & active
+            assigned = DEFAULT_COOLER_SECTIONS.get(cid)
+            section_count = len(assigned) if assigned else 7
+            return section_count * students_per_section
+
+    if near_games:
+        # Sports Complex: Count sections across school scheduled for Games in this slot
+        if tt is not None:
+            day_matches = tt["day_of_week"] == day
+            slot_matches = tt["period_slot"] == slot
+            games_matches = tt["is_games_period"]
+            sections_with_games = tt[day_matches & slot_matches & games_matches]["class_name"].nunique()
+        else:
+            sections_with_games = 2 if slot not in ("P1",) else 0
+        return sections_with_games * students_per_section
+
+    # Academic Wing
+    assigned_sections = DEFAULT_COOLER_SECTIONS.get(cid)
+    if not assigned_sections:
+        loc = str(meta.get("location", "")).lower()
+        if "block 1" in loc:
+            assigned_sections = DEFAULT_COOLER_SECTIONS["Location01A"]
+        elif "block 2" in loc:
+            assigned_sections = DEFAULT_COOLER_SECTIONS["Location02A"]
+        elif "block 3" in loc:
+            assigned_sections = DEFAULT_COOLER_SECTIONS["Location03A"]
+        else:
+            assigned_sections = ["Class-1", "Class-2", "Class-3", "Class-4", "Class-5", "Class-6"]
+
+    if tt is not None:
+        day_matches = tt["day_of_week"] == day
+        slot_matches = tt["period_slot"] == slot
+        games_matches = tt["is_games_period"]
+        class_matches = tt["class_name"].isin(assigned_sections)
+        away_sections = tt[day_matches & slot_matches & games_matches & class_matches]["class_name"].nunique()
+    else:
+        away_sections = 0
+
+    active_sections = max(0, len(assigned_sections) - away_sections)
+    return active_sections * students_per_section
+
+
+def get_zone_student_density_map(
+    timetable_df: Optional[pd.DataFrame] = None,
+    cooler_meta: Optional[Dict[str, Dict[str, Any]]] = None,
+    students_per_section: int = 40,
+) -> Dict[Tuple[str, str, str], int]:
+    """Precompute student footfall density for all (cooler_id, day_of_week, period_slot) combinations."""
+    global _CACHED_DENSITY_MAP
+    if _CACHED_DENSITY_MAP is not None and timetable_df is None:
+        return _CACHED_DENSITY_MAP
+
+    tt = timetable_df if timetable_df is not None else get_default_timetable()
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    slots = ["P1", "P2", "P3", "P4", "Recess", "P5", "P6", "P7", "P8"]
+    cooler_ids = list(DEFAULT_COOLER_SECTIONS.keys()) + ["Location04A", "Location04B"]
+    if cooler_meta:
+        cooler_ids = list(set(cooler_ids) | set(cooler_meta.keys()))
+
+    density_map: Dict[Tuple[str, str, str], int] = {}
+    for cid in cooler_ids:
+        for day in days:
+            for slot in slots:
+                val = compute_active_students_in_zone(
+                    cooler_id=cid,
+                    day_of_week=day,
+                    period_slot=slot,
+                    timetable_df=tt,
+                    cooler_meta=cooler_meta,
+                    students_per_section=students_per_section,
+                )
+                density_map[(cid, day, slot)] = val
+
+    if timetable_df is None:
+        _CACHED_DENSITY_MAP = density_map
+    return density_map
+
+
 def load_temperature_table(
     path: Union[str, Path],
     prefer_binary: bool = True,
