@@ -11,6 +11,9 @@ import json
 import logging
 import os
 import sys
+
+# Disable telemetry phone-home to ensure instant cold-start and offline test execution
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -61,15 +64,26 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------------------------
 predictor = WaterDemandPredictor(model_dir=MODEL_DIR)
 temp_ctrl = TemperatureController()
+_is_bootstrapped: bool = False
 
 
-def bootstrap() -> None:
-    """Load institute data and fit baseline at startup."""
+def bootstrap(force: bool = False) -> Dict[str, Any]:
+    """Load institute data and fit baseline at startup (idempotent)."""
+    global _is_bootstrapped
+    if _is_bootstrapped and not force:
+        return {"status": "already_bootstrapped", "is_bootstrapped": True}
+
+    status: Dict[str, Any] = {
+        "cooler_configs_loaded": 0,
+        "baseline_fitted": False,
+        "temperature_rules_loaded": 0,
+    }
     try:
         cooler_path = DATA_DIR / "cooler_config.csv"
         if cooler_path.exists():
             meta = load_cooler_config(cooler_path)
             predictor.load_cooler_meta(meta)
+            status["cooler_configs_loaded"] = len(meta)
             logger.info("Loaded %d cooler configs", len(meta))
 
         cons_path = DATA_DIR / "Cooler_Water_Consumption_Record.csv"
@@ -79,6 +93,7 @@ def bootstrap() -> None:
             df = load_consumption_record(cons_path)
             # Real multi-week data is still modest; keep CatBoost optional
             info = predictor.fit_from_consumption(df, train_catboost=False)
+            status["baseline_fitted"] = info.get("baseline_fitted", False)
             logger.info("Baseline fit: %s", info)
         else:
             logger.warning("No consumption record found – using engineered defaults only")
@@ -88,12 +103,23 @@ def bootstrap() -> None:
             temp_path = DATA_DIR / "Water_Temperature_Control_Table.xlsx"
         if temp_path.exists():
             temp_ctrl.load_from_file(temp_path)
+            status["temperature_rules_loaded"] = len(temp_ctrl.rules)
             logger.info("Temperature control table loaded from %s", temp_path)
+
+        _is_bootstrapped = True
+        status["status"] = "success"
     except Exception as exc:
         logger.exception("Bootstrap warning: %s", exc)
+        status["error"] = str(exc)
+        status["status"] = "warning"
+
+    return status
 
 
-bootstrap()
+def ensure_bootstrapped() -> None:
+    """Ensure data is loaded before running service logic."""
+    if not _is_bootstrapped:
+        bootstrap()
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +127,7 @@ bootstrap()
 # ---------------------------------------------------------------------------
 
 def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str, Any]:
+    ensure_bootstrapped()
     cooler = payload.get("cooler", {})
     cooler_id = cooler.get("cooler_id", "C01")
     intervals = payload.get("intervals", [])
@@ -199,6 +226,7 @@ def service_forecast_day(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def service_temperature_target(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ensure_bootstrapped()
     outdoor = float(payload.get("outdoor_temp_c", 25.0))
     result = temp_ctrl.get_target(outdoor)
     return {
@@ -216,6 +244,7 @@ def service_temperature_target(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def service_check_shortage(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ensure_bootstrapped()
     result = predictor.compute_shortage(
         capacity_liters=float(payload["capacity_liters"]),
         current_level_liters=float(payload["current_level_liters"]),
@@ -274,6 +303,7 @@ def service_validate_data(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def service_model_info() -> Dict[str, Any]:
+    ensure_bootstrapped()
     return predictor.model_info()
 
 
@@ -382,103 +412,120 @@ def ui_info():
 # Gradio Blocks + API endpoints
 # ---------------------------------------------------------------------------
 
-with gr.Blocks(title="School Water Demand Prediction") as demo:
-    gr.Markdown(
-        """
-        # School Water Cooler Demand Prediction
-        Period-wise water demand (including **Recess** after P4 and **Games**).
-        Uses a robust historical-average baseline; CatBoost quantiles activate only after sufficient real data.
-        Temperature control is deterministic and separate from ML.
-        """
-    )
+_demo_instance: Optional[gr.Blocks] = None
 
-    with gr.Tab("Forecast"):
-        with gr.Row():
-            cooler_id = gr.Textbox(value="Location01A", label="Cooler ID")
-            capacity = gr.Number(value=200, label="Capacity (L)")
-            near_games = gr.Checkbox(value=False, label="Near Games area")
-            current_level = gr.Number(value=140, label="Current level (L)")
-        with gr.Row():
-            day = gr.Dropdown(
-                choices=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
-                value="Monday",
-                label="Day",
-            )
-            slots = gr.Textbox(
-                value="P1,P2,P3,P4,Recess,P5,P6,P7,P8",
-                label="Period slots (comma-separated)",
-            )
-        with gr.Accordion("Auto-Detect Live Weather (Open-Meteo · Nearest Base Station · 8h Cache)", open=True):
-            with gr.Row():
-                weather_city = gr.Textbox(value="New Delhi", label="School City / Location", scale=3)
-                detect_btn = gr.Button("Detect Weather (8h Cache)", variant="secondary", scale=2)
-                force_btn = gr.Button("Force Refresh API", variant="outline", scale=1)
-            weather_status = gr.Markdown(
-                "_Click **Detect Weather** to auto-set the slider from Open-Meteo's nearest base station, or adjust manually below._"
+
+def create_demo() -> gr.Blocks:
+    global _demo_instance
+    if _demo_instance is not None:
+        return _demo_instance
+
+    with gr.Blocks(title="School Water Demand Prediction") as demo:
+            gr.Markdown(
+                """
+                # School Water Cooler Demand Prediction
+                Period-wise water demand (including **Recess** after P4 and **Games**).
+                Uses a robust historical-average baseline; CatBoost quantiles activate only after sufficient real data.
+                Temperature control is deterministic and separate from ML.
+                """
             )
 
-        with gr.Row():
-            outdoor = gr.Slider(-5, 45, value=28, step=0.5, label="Outdoor temp (°C)")
-            weather = gr.Dropdown(
-                choices=["Clear", "Cloudy", "Rainy", "Humid", "Unknown"],
-                value="Clear",
-                label="Weather",
+            with gr.Tab("Forecast"):
+                with gr.Row():
+                    cooler_id = gr.Textbox(value="Location01A", label="Cooler ID")
+                    capacity = gr.Number(value=200, label="Capacity (L)")
+                    near_games = gr.Checkbox(value=False, label="Near Games area")
+                    current_level = gr.Number(value=140, label="Current level (L)")
+                with gr.Row():
+                    day = gr.Dropdown(
+                        choices=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+                        value="Monday",
+                        label="Day",
+                    )
+                    slots = gr.Textbox(
+                        value="P1,P2,P3,P4,Recess,P5,P6,P7,P8",
+                        label="Period slots (comma-separated)",
+                    )
+                with gr.Accordion("Auto-Detect Live Weather (Open-Meteo · Nearest Base Station · 8h Cache)", open=True):
+                    with gr.Row():
+                        weather_city = gr.Textbox(value="New Delhi", label="School City / Location", scale=3)
+                        detect_btn = gr.Button("Detect Weather (8h Cache)", variant="secondary", scale=2)
+                        force_btn = gr.Button("Force Refresh API", variant="outline", scale=1)
+                    weather_status = gr.Markdown(
+                        "_Click **Detect Weather** to auto-set the slider from Open-Meteo's nearest base station, or adjust manually below._"
+                    )
+
+                with gr.Row():
+                    outdoor = gr.Slider(-5, 45, value=28, step=0.5, label="Outdoor temp (°C)")
+                    weather = gr.Dropdown(
+                        choices=["Clear", "Cloudy", "Rainy", "Humid", "Unknown"],
+                        value="Clear",
+                        label="Weather",
+                    )
+
+                detect_btn.click(
+                    fn=lambda c: ui_detect_weather(c, force_refresh=False),
+                    inputs=[weather_city],
+                    outputs=[outdoor, weather, weather_status],
+                )
+                force_btn.click(
+                    fn=lambda c: ui_detect_weather(c, force_refresh=True),
+                    inputs=[weather_city],
+                    outputs=[outdoor, weather, weather_status],
+                )
+                btn = gr.Button("Predict", variant="primary")
+                md_out = gr.Markdown()
+                json_out = gr.Code(language="json", label="Raw JSON response")
+                btn.click(
+                    ui_predict,
+                    inputs=[cooler_id, capacity, near_games, day, slots, outdoor, weather, current_level],
+                    outputs=[md_out, json_out],
+                )
+
+            with gr.Tab("Temperature Target"):
+                with gr.Row():
+                    t_city = gr.Textbox(value="New Delhi", label="School Location", scale=3)
+                    t_detect_btn = gr.Button("Apply Live Temp (Open-Meteo)", scale=2)
+                t_in = gr.Slider(-10, 50, value=30, step=0.5, label="Outdoor temperature (°C)")
+                t_btn = gr.Button("Get target water temperature", variant="primary")
+                t_out = gr.Markdown()
+                t_btn.click(ui_temp, inputs=[t_in], outputs=[t_out])
+
+                def _apply_live_temp_to_target(city: str):
+                    res = fetch_live_weather(city=city)
+                    t = res.get("outdoor_temp_c", 30.0)
+                    st = res.get("station_info", "")
+                    return t, ui_temp(t) + f"\n\n_Auto-detected from {st}_"
+
+                t_detect_btn.click(_apply_live_temp_to_target, inputs=[t_city], outputs=[t_in, t_out])
+
+            with gr.Tab("Model Info"):
+                info_btn = gr.Button("Refresh model info")
+                info_out = gr.Code(language="json")
+                info_btn.click(ui_info, outputs=[info_out])
+                demo.load(ui_info, outputs=[info_out])
+
+            gr.Markdown(
+                """
+                ---
+                **API** (for `cooler-demand` SDK):  
+                `POST /api/predict`, `/api/forecast_day`, `/api/temperature_target`,  
+                `/api/check_shortage`, `/api/validate_data`, `GET /api/model_info`
+                """
             )
 
-        detect_btn.click(
-            fn=lambda c: ui_detect_weather(c, force_refresh=False),
-            inputs=[weather_city],
-            outputs=[outdoor, weather, weather_status],
-        )
-        force_btn.click(
-            fn=lambda c: ui_detect_weather(c, force_refresh=True),
-            inputs=[weather_city],
-            outputs=[outdoor, weather, weather_status],
-        )
-        btn = gr.Button("Predict", variant="primary")
-        md_out = gr.Markdown()
-        json_out = gr.Code(language="json", label="Raw JSON response")
-        btn.click(
-            ui_predict,
-            inputs=[cooler_id, capacity, near_games, day, slots, outdoor, weather, current_level],
-            outputs=[md_out, json_out],
-        )
+        # Mount simple JSON API routes via Gradio's underlying FastAPI app when available.
+        # Gradio 4+ exposes .app (Starlette/FastAPI). We attach routes after launch in
+        # Spaces; for local we also register them here if possible.
 
-    with gr.Tab("Temperature Target"):
-        with gr.Row():
-            t_city = gr.Textbox(value="New Delhi", label="School Location", scale=3)
-            t_detect_btn = gr.Button("Apply Live Temp (Open-Meteo)", scale=2)
-        t_in = gr.Slider(-10, 50, value=30, step=0.5, label="Outdoor temperature (°C)")
-        t_btn = gr.Button("Get target water temperature", variant="primary")
-        t_out = gr.Markdown()
-        t_btn.click(ui_temp, inputs=[t_in], outputs=[t_out])
+    _demo_instance = demo
+    return _demo_instance
 
-        def _apply_live_temp_to_target(city: str):
-            res = fetch_live_weather(city=city)
-            t = res.get("outdoor_temp_c", 30.0)
-            st = res.get("station_info", "")
-            return t, ui_temp(t) + f"\n\n_Auto-detected from {st}_"
 
-        t_detect_btn.click(_apply_live_temp_to_target, inputs=[t_city], outputs=[t_in, t_out])
-
-    with gr.Tab("Model Info"):
-        info_btn = gr.Button("Refresh model info")
-        info_out = gr.Code(language="json")
-        info_btn.click(ui_info, outputs=[info_out])
-        demo.load(ui_info, outputs=[info_out])
-
-    gr.Markdown(
-        """
-        ---
-        **API** (for `cooler-demand` SDK):  
-        `POST /api/predict`, `/api/forecast_day`, `/api/temperature_target`,  
-        `/api/check_shortage`, `/api/validate_data`, `GET /api/model_info`
-        """
-    )
-
-# Mount simple JSON API routes via Gradio's underlying FastAPI app when available.
-# Gradio 4+ exposes .app (Starlette/FastAPI). We attach routes after launch in
-# Spaces; for local we also register them here if possible.
+def __getattr__(name: str) -> Any:
+    if name == 'demo':
+        return create_demo()
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 def _attach_api(blocks: gr.Blocks) -> None:
     try:
@@ -541,7 +588,7 @@ def _attach_api(blocks: gr.Blocks) -> None:
         logger.warning("Could not attach FastAPI routes (UI-only mode): %s", exc)
 
 
-_attach_api(demo)
-
 if __name__ == "__main__":
+    bootstrap()
+    _attach_api(demo)
     demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))

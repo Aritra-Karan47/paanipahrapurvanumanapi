@@ -22,6 +22,14 @@ from model.preprocessing import (
 
 DATA = ROOT / "data"
 
+try:
+    import pyarrow
+    has_pyarrow = True
+except ImportError:
+    has_pyarrow = False
+
+pytestmark = pytest.mark.skipif(not has_pyarrow, reason="pyarrow or fastparquet required for parquet binary table tests")
+
 
 def test_parquet_files_exist_and_readable():
     tt_pq = DATA / "School_Timetable_With_Recess.parquet"

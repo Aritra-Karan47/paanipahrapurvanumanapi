@@ -1,11 +1,12 @@
 """
-Application entrypoint.
-Exports the FastAPI app for FastAPI Cloud / Uvicorn and demo for Gradio / Hugging Face.
+Application entrypoint for local execution or Gradio launcher.
 """
-import os
-import uvicorn
-from main import app, demo
+from src.app.app import demo, bootstrap
 
 if __name__ == "__main__":
+    import os
+    import uvicorn
+    from main import app
+
     port = int(os.environ.get("PORT", 7860))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)

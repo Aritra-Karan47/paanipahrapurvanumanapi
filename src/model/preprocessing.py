@@ -286,15 +286,19 @@ def load_timetable(
 
     df = None
     if prefer_binary:
-        if suffix in (".parquet", ".feather"):
-            df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
-        else:
-            pq_path = path.with_suffix(".parquet")
-            feather_path = path.with_suffix(".feather")
-            if pq_path.exists():
-                df = pd.read_parquet(pq_path)
-            elif feather_path.exists():
-                df = pd.read_feather(feather_path)
+        try:
+            if suffix in (".parquet", ".feather"):
+                df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
+            else:
+                pq_path = path.with_suffix(".parquet")
+                feather_path = path.with_suffix(".feather")
+                if pq_path.exists():
+                    df = pd.read_parquet(pq_path)
+                elif feather_path.exists():
+                    df = pd.read_feather(feather_path)
+        except (ImportError, Exception) as exc:
+            logger.debug("Binary table read skipped (pyarrow/fastparquet not available): %s", exc)
+            df = None
 
     if df is None:
         if suffix in (".xlsx", ".xls"):
@@ -311,10 +315,18 @@ def load_timetable(
                     df = pd.read_excel(path, sheet_name=0)
                 if prefer_binary:
                     save_table_as_parquet(df, path.with_suffix(".parquet"))
-        elif suffix == ".parquet":
-            df = pd.read_parquet(path)
-        elif suffix == ".feather":
-            df = pd.read_feather(path)
+        elif suffix in (".parquet", ".feather"):
+            try:
+                df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
+            except (ImportError, Exception):
+                xlsx_fallback = path.with_suffix(".xlsx")
+                if xlsx_fallback.exists():
+                    try:
+                        df = pd.read_excel(xlsx_fallback, sheet_name=sheet)
+                    except ValueError:
+                        df = pd.read_excel(xlsx_fallback, sheet_name=0)
+                else:
+                    raise
         else:
             df = pd.read_csv(path)
 
@@ -407,15 +419,19 @@ def load_temperature_table(
 
     df = None
     if prefer_binary:
-        if suffix in (".parquet", ".feather"):
-            df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
-        else:
-            pq_path = path.with_suffix(".parquet")
-            feather_path = path.with_suffix(".feather")
-            if pq_path.exists():
-                df = pd.read_parquet(pq_path)
-            elif feather_path.exists():
-                df = pd.read_feather(feather_path)
+        try:
+            if suffix in (".parquet", ".feather"):
+                df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
+            else:
+                pq_path = path.with_suffix(".parquet")
+                feather_path = path.with_suffix(".feather")
+                if pq_path.exists():
+                    df = pd.read_parquet(pq_path)
+                elif feather_path.exists():
+                    df = pd.read_feather(feather_path)
+        except (ImportError, Exception) as exc:
+            logger.debug("Binary table read skipped (pyarrow/fastparquet not available): %s", exc)
+            df = None
 
     if df is None:
         if suffix in (".xlsx", ".xls"):
@@ -432,10 +448,18 @@ def load_temperature_table(
                     df = pd.read_excel(path, sheet_name=0)
                 if prefer_binary:
                     save_table_as_parquet(df, path.with_suffix(".parquet"))
-        elif suffix == ".parquet":
-            df = pd.read_parquet(path)
-        elif suffix == ".feather":
-            df = pd.read_feather(path)
+        elif suffix in (".parquet", ".feather"):
+            try:
+                df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
+            except (ImportError, Exception):
+                xlsx_fallback = path.with_suffix(".xlsx")
+                if xlsx_fallback.exists():
+                    try:
+                        df = pd.read_excel(xlsx_fallback, sheet_name="Rules")
+                    except ValueError:
+                        df = pd.read_excel(xlsx_fallback, sheet_name=0)
+                else:
+                    raise
         else:
             df = pd.read_csv(path)
 
