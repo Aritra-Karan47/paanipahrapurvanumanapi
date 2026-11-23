@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from .cache import compute_temp_band
+
 
 DAY_MAP = {
     "Monday": 0,
@@ -65,16 +67,7 @@ def build_single_feature_row(
     weather_code = WEATHER_MAP.get(weather, -1)
 
     # Temperature bands (same spirit as control table)
-    if outdoor_temp_c < 10:
-        temp_band = 0
-    elif outdoor_temp_c < 18:
-        temp_band = 1
-    elif outdoor_temp_c < 25:
-        temp_band = 2
-    elif outdoor_temp_c < 32:
-        temp_band = 3
-    else:
-        temp_band = 4
+    temp_band = compute_temp_band(outdoor_temp_c)
 
     row = {
         "cooler_id": cooler_id,

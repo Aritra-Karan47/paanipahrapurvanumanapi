@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from .baseline import HistoricalAverageBaseline
+from .cache import PredictionCache, compute_temp_band
 from .catboost_model import CatBoostQuantileModel
 from .features import build_features, build_single_feature_row
 
@@ -28,7 +29,7 @@ class WaterDemandPredictor:
       sufficient for production CatBoost.
     """
 
-    def __init__(self, model_dir: Optional[Path] = None):
+    def __init__(self, model_dir: Optional[Path] = None, cache_maxsize: int = 1024, cache_ttl: float = 1800.0):
         self.model_dir = Path(model_dir) if model_dir else Path("artifacts/models")
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.baseline = HistoricalAverageBaseline()
@@ -36,10 +37,13 @@ class WaterDemandPredictor:
         self.cooler_meta: Dict[str, Dict[str, Any]] = {}
         self.historical_df: Optional[pd.DataFrame] = None
         self.version = MODEL_VERSION
+        self.cache = PredictionCache(maxsize=cache_maxsize, ttl_seconds=cache_ttl)
+        self.prediction_cache = self.cache
 
     def load_cooler_meta(self, meta: Dict[str, Dict[str, Any]]) -> None:
         self.cooler_meta = meta
         self.baseline._cooler_meta = meta
+        self.cache.clear()
 
     def fit_from_consumption(
         self,
@@ -50,6 +54,7 @@ class WaterDemandPredictor:
         """Fit baseline always; CatBoost only if train_catboost and enough rows."""
         self.historical_df = df.copy()
         self.baseline.fit(df, cooler_meta=self.cooler_meta)
+        self.cache.clear()
         info = {
             "baseline_fitted": True,
             "baseline_n": len(df),
@@ -91,8 +96,23 @@ class WaterDemandPredictor:
         outdoor_temp_c: float,
         weather: str = "Unknown",
         model_preference: str = "auto",
+        use_cache: bool = True,
     ) -> List[Dict[str, Any]]:
-        """Predict for a list of interval dicts (period_slot, day_of_week, ...)."""
+        """Predict for a list of interval dicts (period_slot, day_of_week, ...).
+
+        Checks in-memory TTL/LRU cache for (cooler_id, day_of_week, temp_band, slot_tuple)
+        to deliver instant response times (< 2 ms) on repeated calls.
+        """
+        day_of_week = intervals[0].get("day_of_week", "Monday") if intervals else "Monday"
+        temp_band = compute_temp_band(outdoor_temp_c)
+        slot_tuple = tuple(iv["period_slot"] for iv in intervals)
+        cache_key = PredictionCache.build_key(cooler_id, day_of_week, temp_band, slot_tuple)
+
+        if use_cache:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         model_kind = self._resolve_model_preference(model_preference)
         meta = self.cooler_meta.get(cooler_id, {})
         records = []
@@ -120,10 +140,44 @@ class WaterDemandPredictor:
             preds = self.catboost.predict(feat_df)
             for p in preds:
                 p["model_used"] = "catboost"
-            return preds
+        else:
+            # Baseline path
+            preds = self.baseline.predict_batch(records)
 
-        # Baseline path
-        return self.baseline.predict_batch(records)
+        if use_cache:
+            self.cache.set(cache_key, preds)
+
+        return preds
+
+    def predict_cached(
+        self,
+        cooler_id: str,
+        day_of_week: str,
+        temp_band: int,
+        slot_tuple: Tuple[str, ...],
+        outdoor_temp_c: Optional[float] = None,
+        weather: str = "Unknown",
+        model_preference: str = "auto",
+    ) -> List[Dict[str, Any]]:
+        """Direct query by (cooler_id, day_of_week, temp_band, slot_tuple) hitting cache or generating baseline."""
+        cache_key = PredictionCache.build_key(cooler_id, day_of_week, temp_band, slot_tuple)
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if outdoor_temp_c is None:
+            band_temps = {0: 5.0, 1: 14.0, 2: 21.0, 3: 28.0, 4: 35.0}
+            outdoor_temp_c = band_temps.get(temp_band, 25.0)
+
+        intervals = [{"period_slot": s, "day_of_week": day_of_week} for s in slot_tuple]
+        return self.predict_intervals(
+            cooler_id=cooler_id,
+            intervals=intervals,
+            outdoor_temp_c=outdoor_temp_c,
+            weather=weather,
+            model_preference=model_preference,
+            use_cache=True,
+        )
 
     def compute_shortage(
         self,

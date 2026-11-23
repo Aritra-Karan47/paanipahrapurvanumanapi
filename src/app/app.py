@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from model.predictor import WaterDemandPredictor
+from model.cache import PredictionCache, compute_temp_band
 from model.preprocessing import (
     load_consumption_record,
     load_cooler_config,
@@ -97,7 +98,7 @@ bootstrap()
 # Core service functions (used by both Gradio UI and API wrappers)
 # ---------------------------------------------------------------------------
 
-def service_predict(payload: Dict[str, Any]) -> Dict[str, Any]:
+def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str, Any]:
     cooler = payload.get("cooler", {})
     cooler_id = cooler.get("cooler_id", "C01")
     intervals = payload.get("intervals", [])
@@ -107,6 +108,8 @@ def service_predict(payload: Dict[str, Any]) -> Dict[str, Any]:
     if hasattr(weather_name, "value"):
         weather_name = weather_name.value
     pref = payload.get("model_preference", "auto")
+    if "use_cache" in payload:
+        use_cache = bool(payload["use_cache"])
 
     # Ensure cooler meta is present for this request
     if cooler_id not in predictor.cooler_meta and cooler.get("capacity_liters"):
@@ -134,6 +137,7 @@ def service_predict(payload: Dict[str, Any]) -> Dict[str, Any]:
         outdoor_temp_c=outdoor,
         weather=str(weather_name),
         model_preference=pref,
+        use_cache=use_cache,
     )
 
     results = []
@@ -516,6 +520,10 @@ def _attach_api(blocks: gr.Blocks) -> None:
         @app.get("/api/model_info")
         async def api_info():
             return JSONResponse(service_model_info())
+
+        @app.get("/api/cache_info")
+        async def api_cache_info():
+            return JSONResponse(predictor.cache.cache_info())
 
         @app.post("/api/live_weather")
         async def api_weather(request: Request):
