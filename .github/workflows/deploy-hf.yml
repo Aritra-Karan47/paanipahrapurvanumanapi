@@ -34,6 +34,8 @@ jobs:
       - name: Push to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME || github.repository_owner }}
+          HF_SPACE_NAME: ${{ vars.HF_SPACE_NAME || 'paanipahrapurvanumanapi' }}
         run: |
           if [ -z "$HF_TOKEN" ]; then
             echo "ERROR: HF_TOKEN secret is not set. Add it in GitHub Settings -> Secrets and variables -> Actions."
@@ -41,5 +43,5 @@ jobs:
           fi
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git remote add space https://abhirajadhikary06:$HF_TOKEN@huggingface.co/spaces/abhirajadhikary06/school-water-demand
+          git remote add space "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME"
           git push space main:main --force

@@ -43,8 +43,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://huggingface.co/spaces/school-water-demand"
-Repository = "https://github.com/example/school-water-demand"
+Homepage = "https://huggingface.co/spaces/yashvardhanyadav09/paanipahrapurvanumanapi"
+Repository = "https://github.com/yashvardhanyadav09/paanipahrapurvanumanapi"
 
 [tool.setuptools.packages.find]
 where = ["src"]
