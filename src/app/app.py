@@ -18,6 +18,21 @@ from typing import Any, Dict, List, Optional
 import gradio as gr
 import pandas as pd
 
+try:
+    from fastapi import Request
+    from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import JSONResponse
+except ImportError:
+    try:
+        from fastapi import Request
+        from fastapi.responses import JSONResponse
+        import asyncio
+        run_in_threadpool = asyncio.to_thread  # type: ignore
+    except ImportError:
+        Request = Any  # type: ignore
+        run_in_threadpool = None  # type: ignore
+        JSONResponse = None  # type: ignore
+
 # Ensure src is on path when running as Space
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -463,18 +478,25 @@ def _attach_api(blocks: gr.Blocks) -> None:
     try:
         from fastapi import Request
         from fastapi.responses import JSONResponse
+        try:
+            from fastapi.concurrency import run_in_threadpool
+        except ImportError:
+            import asyncio
+            run_in_threadpool = asyncio.to_thread  # type: ignore
 
         app = blocks.app
 
         @app.post("/api/predict")
         async def api_predict(request: Request):
             body = await request.json()
-            return JSONResponse(service_predict(body))
+            result = await run_in_threadpool(service_predict, body)
+            return JSONResponse(result)
 
         @app.post("/api/forecast_day")
         async def api_forecast(request: Request):
             body = await request.json()
-            return JSONResponse(service_forecast_day(body))
+            result = await run_in_threadpool(service_forecast_day, body)
+            return JSONResponse(result)
 
         @app.post("/api/temperature_target")
         async def api_temp(request: Request):
