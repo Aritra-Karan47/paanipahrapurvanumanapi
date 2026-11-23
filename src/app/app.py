@@ -91,10 +91,15 @@ def bootstrap(force: bool = False) -> Dict[str, Any]:
             cons_path = DATA_DIR / "Cooler_Water_Consumption_Record.xlsx"
         if cons_path.exists():
             df = load_consumption_record(cons_path)
-            # Real multi-week data is still modest; keep CatBoost optional
+            # Real multi-week data is fitted into baseline; CatBoost runs from persisted artifacts
             info = predictor.fit_from_consumption(df, train_catboost=False)
             status["baseline_fitted"] = info.get("baseline_fitted", False)
-            logger.info("Baseline fit: %s", info)
+            logger.info(
+                "Baseline fit: %s (CatBoost active=%s, n=%d)",
+                info,
+                predictor.catboost.trained,
+                predictor.catboost.n_train,
+            )
         else:
             logger.warning("No consumption record found – using engineered defaults only")
 
@@ -151,14 +156,19 @@ def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str
 
     iv_list = []
     for iv in intervals:
-        iv_list.append(
-            {
-                "period_slot": iv.get("period_slot", "P1"),
-                "day_of_week": iv.get("day_of_week", "Monday"),
-                "games_intensity": iv.get("games_intensity", "None"),
-                "duration_minutes": iv.get("duration_minutes", 40),
-            }
-        )
+        entry = {
+            "period_slot": iv.get("period_slot", "P1"),
+            "day_of_week": iv.get("day_of_week", "Monday"),
+            "games_intensity": iv.get("games_intensity", "None"),
+            "duration_minutes": iv.get("duration_minutes", 40),
+        }
+        if "outdoor_temp_c" in iv:
+            entry["outdoor_temp_c"] = iv["outdoor_temp_c"]
+        if "active_students_in_zone" in iv:
+            entry["active_students_in_zone"] = iv["active_students_in_zone"]
+        iv_list.append(entry)
+
+    hourly_forecast = weather.get("hourly_forecast")
 
     preds = predictor.predict_intervals(
         cooler_id=cooler_id,
@@ -167,6 +177,7 @@ def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str
         weather=str(weather_name),
         model_preference=pref,
         use_cache=use_cache,
+        hourly_forecast=hourly_forecast,
     )
 
     results = []

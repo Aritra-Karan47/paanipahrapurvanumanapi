@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,6 +40,7 @@ class CatBoostQuantileModel:
         self.feature_cols = feature_columns(include_target=False)
         self.trained = False
         self.n_train = 0
+        self.p90_offset: float = 0.0
         self.metrics: Dict[str, float] = {}
 
     @property
@@ -123,7 +125,7 @@ class CatBoostQuantileModel:
                 X[c] = X[c].fillna(0.0)
 
         p50 = np.clip(self.p50.predict(X), 0, None)
-        p90 = np.clip(self.p90.predict(X), 0, None)
+        p90 = np.clip(self.p90.predict(X) + self.p90_offset, 0, None)
         # Ensure p90 >= p50
         p90 = np.maximum(p90, p50)
 
@@ -146,6 +148,20 @@ class CatBoostQuantileModel:
             return
         self.p50.save_model(str(self.model_dir / f"{prefix}_p50.cbm"))
         self.p90.save_model(str(self.model_dir / f"{prefix}_p90.cbm"))
+        meta_path = self.model_dir / f"{prefix}_meta.json"
+        try:
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "n_train": self.n_train,
+                        "metrics": self.metrics,
+                        "feature_cols": self.feature_cols,
+                    },
+                    f,
+                    indent=2,
+                )
+        except Exception as exc:
+            logger.warning("Could not persist CatBoost metadata: %s", exc)
         logger.info("Saved CatBoost models to %s", self.model_dir)
 
     def load(self, prefix: str = "catboost") -> bool:
@@ -160,5 +176,21 @@ class CatBoostQuantileModel:
         self.p50.load_model(str(p50_path))
         self.p90.load_model(str(p90_path))
         self.trained = True
-        logger.info("Loaded CatBoost models from %s", self.model_dir)
+
+        meta_path = self.model_dir / f"{prefix}_meta.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    self.n_train = meta.get("n_train", 2160)
+                    self.metrics = meta.get("metrics", {})
+                    self.p90_offset = float(self.metrics.get("p90_calibration_offset", 0.0))
+            except Exception:
+                self.n_train = 2160
+                self.p90_offset = 0.0
+        else:
+            self.n_train = 2160
+            self.p90_offset = 0.0
+
+        logger.info("Loaded CatBoost models from %s (n_train=%d)", self.model_dir, self.n_train)
         return True
