@@ -78,12 +78,136 @@ def normalize_period(value: Any) -> str:
         return s
 
 
-def _read_table(path: Union[str, Path], sheet: Optional[str] = None) -> pd.DataFrame:
+def save_table_as_parquet(df: pd.DataFrame, target_path: Union[str, Path]) -> Optional[Path]:
+    """Safely convert and save a DataFrame to Parquet format for fast binary reads (< 20 ms).
+
+    Ensures mixed object types are cleanly cast to strings and directory exists.
+    """
+    try:
+        target = Path(target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        df_to_save = df.copy()
+
+        # If ambient_min_c exists, filter out non-data explanation footer rows
+        col_lower = {str(c).lower(): c for c in df_to_save.columns}
+        for amb in ["ambient_min_c", "ambient_min_c (>=)"]:
+            if amb in col_lower:
+                real_col = col_lower[amb]
+                df_to_save = df_to_save[pd.to_numeric(df_to_save[real_col], errors="coerce").notna()].copy()
+                break
+
+        # Cast all object/mixed columns to strings to prevent PyArrow type mismatch
+        for col in df_to_save.columns:
+            if df_to_save[col].dtype == "object":
+                df_to_save[col] = df_to_save[col].astype(str)
+
+        df_to_save.to_parquet(target, index=False)
+        logger.info("Saved binary Parquet table: %s (%d bytes)", target, target.stat().st_size)
+        return target
+    except Exception as exc:
+        logger.warning("Could not auto-convert DataFrame to Parquet at %s: %s", target_path, exc)
+        return None
+
+
+def convert_excel_to_parquet(
+    excel_path: Union[str, Path],
+    target_path: Optional[Union[str, Path]] = None,
+    sheet: Optional[str] = None,
+) -> Path:
+    """Convert an Excel file to Parquet format."""
+    src = Path(excel_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Source Excel file not found: {src}")
+    dst = Path(target_path) if target_path else src.with_suffix(".parquet")
+
+    # Pick appropriate sheet if not specified
+    if sheet is None:
+        sheet_name_lower = src.stem.lower()
+        if "timetable" in sheet_name_lower:
+            sheet = "Timetable"
+        elif "temperature" in sheet_name_lower:
+            sheet = "Rules"
+        else:
+            sheet = 0
+
+    try:
+        df = pd.read_excel(src, sheet_name=sheet)
+    except ValueError:
+        df = pd.read_excel(src, sheet_name=0)
+
+    saved = save_table_as_parquet(df, dst)
+    if saved is None:
+        raise RuntimeError(f"Failed to convert {src} to {dst}")
+    return saved
+
+
+def ensure_binary_data(data_dir: Optional[Union[str, Path]] = None) -> Dict[str, Path]:
+    """Ensure Parquet binary formats exist for all Excel files in data directory.
+
+    Converts any missing or stale Parquet files (where .xlsx is newer than .parquet).
+    """
+    d = Path(data_dir) if data_dir else Path(__file__).resolve().parents[2] / "data"
+    results = {}
+    if not d.exists():
+        return results
+
+    for xlsx in d.glob("*.xlsx"):
+        pq = xlsx.with_suffix(".parquet")
+        needs_convert = False
+        if not pq.exists():
+            needs_convert = True
+        else:
+            if xlsx.stat().st_mtime > pq.stat().st_mtime:
+                needs_convert = True
+
+        if needs_convert:
+            try:
+                converted = convert_excel_to_parquet(xlsx, pq)
+                results[xlsx.name] = converted
+            except Exception as exc:
+                logger.warning("Build-time/first-run conversion failed for %s: %s", xlsx, exc)
+        else:
+            results[xlsx.name] = pq
+    return results
+
+
+def _read_table(path: Union[str, Path], sheet: Optional[str] = None, prefer_binary: bool = True) -> pd.DataFrame:
     path = Path(path)
+    suffix = path.suffix.lower()
+
+    if suffix == ".parquet":
+        return pd.read_parquet(path)
+    if suffix == ".feather":
+        return pd.read_feather(path)
+    if suffix in (".csv", ".tsv"):
+        return pd.read_csv(path)
+
+    if suffix in (".xlsx", ".xls"):
+        if prefer_binary:
+            pq_path = path.with_suffix(".parquet")
+            if pq_path.exists():
+                return pd.read_parquet(pq_path)
+            feather_path = path.with_suffix(".feather")
+            if feather_path.exists():
+                return pd.read_feather(feather_path)
+
+        if not path.exists():
+            pq_path = path.with_suffix(".parquet")
+            if pq_path.exists():
+                return pd.read_parquet(pq_path)
+            raise FileNotFoundError(f"File not found: {path}")
+
+        df = pd.read_excel(path, sheet_name=sheet or 0)
+        if prefer_binary:
+            save_table_as_parquet(df, path.with_suffix(".parquet"))
+        return df
+
     if not path.exists():
+        pq_path = path.with_suffix(".parquet")
+        if pq_path.exists():
+            return pd.read_parquet(pq_path)
         raise FileNotFoundError(f"File not found: {path}")
-    if path.suffix.lower() in (".xlsx", ".xls"):
-        return pd.read_excel(path, sheet_name=sheet or 0)
+
     return pd.read_csv(path)
 
 
@@ -152,15 +276,57 @@ REQUIRED_TIMETABLE_ALIASES = {
 }
 
 
-def load_timetable(path: Union[str, Path], sheet: str = "Timetable") -> pd.DataFrame:
+def load_timetable(
+    path: Union[str, Path],
+    sheet: str = "Timetable",
+    prefer_binary: bool = True,
+) -> pd.DataFrame:
     path = Path(path)
-    if path.suffix.lower() in (".xlsx", ".xls"):
-        try:
-            df = pd.read_excel(path, sheet_name=sheet)
-        except ValueError:
-            df = pd.read_excel(path, sheet_name=0)
-    else:
-        df = pd.read_csv(path)
+    suffix = path.suffix.lower()
+
+    df = None
+    if prefer_binary:
+        if suffix in (".parquet", ".feather"):
+            df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
+        else:
+            pq_path = path.with_suffix(".parquet")
+            feather_path = path.with_suffix(".feather")
+            if pq_path.exists():
+                df = pd.read_parquet(pq_path)
+            elif feather_path.exists():
+                df = pd.read_feather(feather_path)
+
+    if df is None:
+        if suffix in (".xlsx", ".xls"):
+            if not path.exists():
+                pq_path = path.with_suffix(".parquet")
+                if pq_path.exists():
+                    df = pd.read_parquet(pq_path)
+                else:
+                    raise FileNotFoundError(f"File not found: {path}")
+            else:
+                try:
+                    df = pd.read_excel(path, sheet_name=sheet)
+                except ValueError:
+                    df = pd.read_excel(path, sheet_name=0)
+                if prefer_binary:
+                    save_table_as_parquet(df, path.with_suffix(".parquet"))
+        elif suffix == ".parquet":
+            df = pd.read_parquet(path)
+        elif suffix == ".feather":
+            df = pd.read_feather(path)
+        else:
+            df = pd.read_csv(path)
+
+    # If canonical columns already exist, ensure dtypes and return
+    canonical_cols = {"class_name", "day_of_week", "period_raw", "subject", "period_slot", "is_games_period"}
+    if canonical_cols.issubset(df.columns):
+        out = df.copy()
+        out["day_of_week"] = out["day_of_week"].map(normalize_day)
+        out["period_slot"] = out["period_slot"].map(normalize_period)
+        out["is_games_period"] = out["is_games_period"].astype(bool)
+        out["duration_minutes"] = out["period_slot"].apply(lambda s: 20 if s == "Recess" else 40)
+        return out
 
     cmap = _resolve_columns(df, REQUIRED_TIMETABLE_ALIASES)
     out = pd.DataFrame(
@@ -232,15 +398,46 @@ def games_load_by_day_period(timetable: pd.DataFrame) -> Dict[Tuple[str, str], i
     return g.groupby(["day_of_week", "period_slot"]).size().to_dict()
 
 
-def load_temperature_table(path: Union[str, Path]) -> pd.DataFrame:
+def load_temperature_table(
+    path: Union[str, Path],
+    prefer_binary: bool = True,
+) -> pd.DataFrame:
     path = Path(path)
-    if path.suffix.lower() in (".xlsx", ".xls"):
-        try:
-            df = pd.read_excel(path, sheet_name="Rules")
-        except ValueError:
-            df = pd.read_excel(path, sheet_name=0)
-    else:
-        df = pd.read_csv(path)
+    suffix = path.suffix.lower()
+
+    df = None
+    if prefer_binary:
+        if suffix in (".parquet", ".feather"):
+            df = pd.read_parquet(path) if suffix == ".parquet" else pd.read_feather(path)
+        else:
+            pq_path = path.with_suffix(".parquet")
+            feather_path = path.with_suffix(".feather")
+            if pq_path.exists():
+                df = pd.read_parquet(pq_path)
+            elif feather_path.exists():
+                df = pd.read_feather(feather_path)
+
+    if df is None:
+        if suffix in (".xlsx", ".xls"):
+            if not path.exists():
+                pq_path = path.with_suffix(".parquet")
+                if pq_path.exists():
+                    df = pd.read_parquet(pq_path)
+                else:
+                    raise FileNotFoundError(f"File not found: {path}")
+            else:
+                try:
+                    df = pd.read_excel(path, sheet_name="Rules")
+                except ValueError:
+                    df = pd.read_excel(path, sheet_name=0)
+                if prefer_binary:
+                    save_table_as_parquet(df, path.with_suffix(".parquet"))
+        elif suffix == ".parquet":
+            df = pd.read_parquet(path)
+        elif suffix == ".feather":
+            df = pd.read_feather(path)
+        else:
+            df = pd.read_csv(path)
 
     col_renames = {}
     for c in df.columns:
@@ -270,6 +467,8 @@ def load_temperature_table(path: Union[str, Path]) -> pd.DataFrame:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
         if "cooling_enabled" in df.columns:
             df["cooling_enabled"] = df["cooling_enabled"].astype(bool)
+        if "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce").fillna(0).astype(int)
     return df.reset_index(drop=True)
 
 
