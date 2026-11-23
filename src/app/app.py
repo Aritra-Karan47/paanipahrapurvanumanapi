@@ -31,6 +31,7 @@ from model.preprocessing import (
     extract_day_intervals,
 )
 from temp_control.controller import TemperatureController
+from weather.service import fetch_live_weather
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("water-demand-app")
@@ -255,9 +256,42 @@ def service_model_info() -> Dict[str, Any]:
     return predictor.model_info()
 
 
+def service_live_weather(payload: Dict[str, Any]) -> Dict[str, Any]:
+    city = payload.get("city")
+    lat = payload.get("latitude")
+    lon = payload.get("longitude")
+    force = bool(payload.get("force_refresh", False))
+    return fetch_live_weather(city=city, lat=lat, lon=lon, force_refresh=force)
+
+
 # ---------------------------------------------------------------------------
 # Gradio UI helpers
 # ---------------------------------------------------------------------------
+
+def ui_detect_weather(city: str, force_refresh: bool = False):
+    res = fetch_live_weather(city=city, force_refresh=force_refresh)
+    temp = res.get("outdoor_temp_c", 28.0)
+    cond = res.get("weather", "Clear")
+    st_info = res.get("station_info", "")
+    loc = res.get("location_name", city or "Location")
+
+    if res.get("cached"):
+        age_str = f"Cached ({res.get('cache_age_hours', 0)}h old, valid for {res.get('cache_ttl_remaining_hours', 8)}h)"
+        badge = "🟢"
+    else:
+        badge = "⚡"
+        age_str = "Freshly fetched from Open-Meteo (8-hour cache initialized)"
+
+    status_md = (
+        f"**{badge} Live Weather Detected**: **{temp} °C**, **{cond}** ({res.get('humidity_pct', 50)}% humidity)\n\n"
+        f"• **Location**: {loc}\n"
+        f"• **Source**: {res.get('source', 'Open-Meteo')}\n"
+        f"• **Base Station**: {st_info}\n"
+        f"• **Cache**: {age_str}\n\n"
+        f"_Slider below is auto-updated, but you can still drag it manually to simulate what-if scenarios._"
+    )
+    return temp, cond, status_md
+
 
 def ui_predict(
     cooler_id: str,
@@ -355,12 +389,33 @@ with gr.Blocks(title="School Water Demand Prediction") as demo:
                 value="P1,P2,P3,P4,Recess,P5,P6,P7,P8",
                 label="Period slots (comma-separated)",
             )
+        with gr.Accordion("🌐 Auto-Detect Live Weather (Open-Meteo · Nearest Base Station · 8h Cache)", open=True):
+            with gr.Row():
+                weather_city = gr.Textbox(value="New Delhi", label="School City / Location", scale=3)
+                detect_btn = gr.Button("📍 Detect Weather (8h Cache)", variant="secondary", scale=2)
+                force_btn = gr.Button("🔄 Force Refresh API", variant="outline", scale=1)
+            weather_status = gr.Markdown(
+                "_Click **Detect Weather** to auto-set the slider from Open-Meteo's nearest base station, or adjust manually below._"
+            )
+
+        with gr.Row():
             outdoor = gr.Slider(-5, 45, value=28, step=0.5, label="Outdoor temp (°C)")
             weather = gr.Dropdown(
                 choices=["Clear", "Cloudy", "Rainy", "Humid", "Unknown"],
                 value="Clear",
                 label="Weather",
             )
+
+        detect_btn.click(
+            fn=lambda c: ui_detect_weather(c, force_refresh=False),
+            inputs=[weather_city],
+            outputs=[outdoor, weather, weather_status],
+        )
+        force_btn.click(
+            fn=lambda c: ui_detect_weather(c, force_refresh=True),
+            inputs=[weather_city],
+            outputs=[outdoor, weather, weather_status],
+        )
         btn = gr.Button("Predict", variant="primary")
         md_out = gr.Markdown()
         json_out = gr.Code(language="json", label="Raw JSON response")
@@ -371,10 +426,21 @@ with gr.Blocks(title="School Water Demand Prediction") as demo:
         )
 
     with gr.Tab("Temperature Target"):
+        with gr.Row():
+            t_city = gr.Textbox(value="New Delhi", label="School Location", scale=3)
+            t_detect_btn = gr.Button("📍 Apply Live Temp (Open-Meteo)", scale=2)
         t_in = gr.Slider(-10, 50, value=30, step=0.5, label="Outdoor temperature (°C)")
-        t_btn = gr.Button("Get target water temperature")
+        t_btn = gr.Button("Get target water temperature", variant="primary")
         t_out = gr.Markdown()
         t_btn.click(ui_temp, inputs=[t_in], outputs=[t_out])
+
+        def _apply_live_temp_to_target(city: str):
+            res = fetch_live_weather(city=city)
+            t = res.get("outdoor_temp_c", 30.0)
+            st = res.get("station_info", "")
+            return t, ui_temp(t) + f"\n\n_Auto-detected from {st}_"
+
+        t_detect_btn.click(_apply_live_temp_to_target, inputs=[t_city], outputs=[t_in, t_out])
 
     with gr.Tab("Model Info"):
         info_btn = gr.Button("Refresh model info")
@@ -430,6 +496,15 @@ def _attach_api(blocks: gr.Blocks) -> None:
         @app.get("/api/model_info")
         async def api_info():
             return JSONResponse(service_model_info())
+
+        @app.post("/api/live_weather")
+        async def api_weather(request: Request):
+            body = await request.json()
+            return JSONResponse(service_live_weather(body))
+
+        @app.get("/api/live_weather")
+        async def api_weather_get(city: str = "New Delhi", force_refresh: bool = False):
+            return JSONResponse(service_live_weather({"city": city, "force_refresh": force_refresh}))
 
         logger.info("REST API routes attached under /api/*")
     except Exception as exc:

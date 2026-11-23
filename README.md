@@ -1,3 +1,14 @@
+---
+title: School Water Cooler Demand Prediction
+emoji: 🚰
+colorFrom: blue
+colorTo: cyan
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+---
+
 # School Water Demand Prediction Model & Inference Service
 
 Production-oriented system that predicts **period-wise water consumption** for individual school water coolers, including the **Recess** interval after every fourth period (P4) and **Games** periods.
@@ -120,7 +131,7 @@ school-water-demand/
 
 ```bash
 # Clone / unpack and enter the repo
-cd school-water-demand
+cd paanipahrapurvanumanapi
 
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -295,7 +306,7 @@ Synthetic fixtures under `data/` and `fixtures/` are **explicitly for software t
 
 1. **Data volume** – One week of synthetic data cannot capture seasonal patterns, exam weeks, special events, or cooler-specific drift. Collect at least several weeks of real period-level telemetry before enabling CatBoost in production.
 2. **No automatic retraining** – Retrain offline, version the models, and deploy new artifacts to the Space. Update `MODEL_VERSION` accordingly.
-3. **Weather** – The service accepts outdoor temperature and a coarse weather label; the main application is responsible for calling a weather API.
+3. **Weather** – Built-in free Open-Meteo integration auto-detects outdoor temperature and conditions from the nearest meteorological base station grid node, with an **8-hour cache TTL**. The interactive temperature slider remains fully functional for manual adjustment and what-if simulation.
 4. **Sensor reconciliation** – Flow/level sensor fusion and manual refill event logging belong to the main application; the model only consumes the current level and predicted demand you supply.
 5. **Multi-school** – The service is deliberately institute-agnostic. Pass cooler metadata and history on every request (or maintain a thin cache in the main app).
 
