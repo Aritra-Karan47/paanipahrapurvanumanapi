@@ -28,6 +28,74 @@
     "holdout_coverage_p90_pct": 90.97,
     "p90_calibration_offset": 0.2022
   },
+  "temporal_cv": {
+    "strategy": "time_series",
+    "n_folds": 3,
+    "mean_mae": 0.9431,
+    "std_mae": 0.0253,
+    "mean_mape_pct": 18.18,
+    "mean_calibrated_p90_coverage_pct": 90.97,
+    "mean_calibration_offset": 0.2717,
+    "folds": [
+      {
+        "fold": 1,
+        "train_weeks": [
+          1,
+          2
+        ],
+        "test_weeks": [
+          3
+        ],
+        "train_samples": 864,
+        "test_samples": 432,
+        "mae": 0.9291,
+        "mape_pct": 17.13,
+        "rmse": 1.1182,
+        "raw_p90_coverage_pct": 76.39,
+        "calibrated_p90_coverage_pct": 90.97,
+        "p90_calibration_offset": 0.4281
+      },
+      {
+        "fold": 2,
+        "train_weeks": [
+          1,
+          2,
+          3
+        ],
+        "test_weeks": [
+          4
+        ],
+        "train_samples": 1296,
+        "test_samples": 432,
+        "mae": 0.9786,
+        "mape_pct": 20.47,
+        "rmse": 1.1843,
+        "raw_p90_coverage_pct": 83.33,
+        "calibrated_p90_coverage_pct": 90.97,
+        "p90_calibration_offset": 0.2206
+      },
+      {
+        "fold": 3,
+        "train_weeks": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "test_weeks": [
+          5
+        ],
+        "train_samples": 1728,
+        "test_samples": 432,
+        "mae": 0.9217,
+        "mape_pct": 16.93,
+        "rmse": 1.1314,
+        "raw_p90_coverage_pct": 85.42,
+        "calibrated_p90_coverage_pct": 90.97,
+        "p90_calibration_offset": 0.1663
+      }
+    ]
+  },
   "model_version": "water-demand-v0.1.0-catboost",
   "trained_on": "Cooler_Water_Consumption_Record.csv (5 weeks, 2160 rows)"
 }
