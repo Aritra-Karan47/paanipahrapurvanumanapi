@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -337,11 +338,17 @@ def _wmo_code_to_condition(code: int, humidity: Optional[float] = None) -> str:
 
 
 class WeatherCacheManager:
-    """Thread-safe persistent cache for weather readings with an 8-hour TTL."""
+    """Thread-safe persistent cache for weather readings with an 8-hour TTL.
+
+    Uses an internal threading.Lock for safe multi-threaded access and atomic
+    file replacements via temporary files and os.replace to prevent file corruption
+    under high-concurrency race conditions.
+    """
 
     def __init__(self, cache_file: Path = CACHE_FILE_PATH, ttl_seconds: int = CACHE_TTL_SECONDS):
         self.cache_file = cache_file
         self.ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
         self._memory_cache: Dict[str, Dict[str, Any]] = {}
         self._load_disk_cache()
 
@@ -357,41 +364,62 @@ class WeatherCacheManager:
                 with open(self.cache_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, dict):
-                        self._memory_cache = data
+                        with self._lock:
+                            self._memory_cache = data
                         logger.debug("Loaded %d weather cache entries from %s", len(data), self.cache_file)
         except Exception as exc:
             logger.warning("Could not read weather cache from %s: %s", self.cache_file, exc)
-            self._memory_cache = {}
+            with self._lock:
+                self._memory_cache = {}
 
     def _save_disk_cache(self) -> None:
+        """Atomically persist cache to disk by writing to a temporary file first and calling os.replace."""
+        temp_file: Optional[Path] = None
         try:
             self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_file, "w", encoding="utf-8") as f:
+            parent_dir = self.cache_file.parent
+            # Suffix with pid, thread ident, and timestamp for complete collision isolation
+            unique_suffix = f"{os.getpid()}_{threading.get_ident()}_{time.time_ns()}"
+            temp_file = parent_dir / f"{self.cache_file.name}.tmp.{unique_suffix}"
+
+            with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(self._memory_cache, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Atomic rename: replaces destination file atomically across Windows & POSIX
+            os.replace(temp_file, self.cache_file)
+            logger.debug("Atomically saved weather cache to %s", self.cache_file)
         except Exception as exc:
             logger.warning("Could not persist weather cache to %s: %s", self.cache_file, exc)
+            if temp_file is not None and temp_file.exists():
+                try:
+                    temp_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def get(self, city: Optional[str], lat: Optional[float], lon: Optional[float]) -> Optional[Dict[str, Any]]:
         key = self._normalize_key(city, lat, lon)
-        entry = self._memory_cache.get(key)
-        if not entry:
+        with self._lock:
+            entry = self._memory_cache.get(key)
+            if not entry:
+                return None
+
+            now = time.time()
+            stored_time = float(entry.get("timestamp", 0))
+            age = now - stored_time
+
+            if age < self.ttl_seconds:
+                # Cache is fresh (less than 8 hours old)
+                res = dict(entry)
+                res["cached"] = True
+                res["cache_age_hours"] = round(age / 3600, 2)
+                res["cache_ttl_remaining_hours"] = round((self.ttl_seconds - age) / 3600, 2)
+                res["source"] = f"Open-Meteo (Cached {res['cache_age_hours']}h ago - 8h TTL)"
+                return res
+
+            # Expired
             return None
-
-        now = time.time()
-        stored_time = float(entry.get("timestamp", 0))
-        age = now - stored_time
-
-        if age < self.ttl_seconds:
-            # Cache is fresh (less than 8 hours old)
-            res = dict(entry)
-            res["cached"] = True
-            res["cache_age_hours"] = round(age / 3600, 2)
-            res["cache_ttl_remaining_hours"] = round((self.ttl_seconds - age) / 3600, 2)
-            res["source"] = f"Open-Meteo (Cached {res['cache_age_hours']}h ago - 8h TTL)"
-            return res
-
-        # Expired
-        return None
 
     def put(self, city: Optional[str], lat: Optional[float], lon: Optional[float], data: Dict[str, Any]) -> None:
         key = self._normalize_key(city, lat, lon)
@@ -403,8 +431,9 @@ class WeatherCacheManager:
         record["cache_age_hours"] = 0.0
         record["cache_ttl_remaining_hours"] = 8.0
 
-        self._memory_cache[key] = record
-        self._save_disk_cache()
+        with self._lock:
+            self._memory_cache[key] = record
+            self._save_disk_cache()
 
 
 # Global cache instance
