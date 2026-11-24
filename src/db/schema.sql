@@ -1,11 +1,11 @@
 -- PaniPaharaPurvanuman Neon Postgres Schema
 -- School Water Cooler Demand & IS 1475:2024 Temperature Control Tables
 
--- 1. Cooler Metadata
+-- 1. Ensure Cooler metadata columns exist on coolers table
 CREATE TABLE IF NOT EXISTS coolers (
-    cooler_id VARCHAR(32) PRIMARY KEY,
+    cooler_id BIGINT PRIMARY KEY,
     location VARCHAR(128) NOT NULL DEFAULT 'unknown',
-    capacity_liters NUMERIC(8, 2) NOT NULL,
+    capacity_liters NUMERIC(8, 2) NOT NULL DEFAULT 200.0,
     floor INTEGER NOT NULL DEFAULT 0,
     near_games BOOLEAN NOT NULL DEFAULT FALSE,
     current_level_liters NUMERIC(8, 2),
@@ -13,10 +13,17 @@ CREATE TABLE IF NOT EXISTS coolers (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE coolers ADD COLUMN IF NOT EXISTS location VARCHAR(128) DEFAULT 'unknown';
+ALTER TABLE coolers ADD COLUMN IF NOT EXISTS capacity_liters NUMERIC(8, 2);
+ALTER TABLE coolers ADD COLUMN IF NOT EXISTS floor INTEGER DEFAULT 0;
+ALTER TABLE coolers ADD COLUMN IF NOT EXISTS near_games BOOLEAN DEFAULT FALSE;
+ALTER TABLE coolers ADD COLUMN IF NOT EXISTS current_level_liters NUMERIC(8, 2);
+ALTER TABLE coolers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- 2. Time-Series Water Consumption Telemetry
 CREATE TABLE IF NOT EXISTS consumption_records (
     id BIGSERIAL PRIMARY KEY,
-    cooler_id VARCHAR(32) NOT NULL REFERENCES coolers(cooler_id) ON DELETE CASCADE,
+    cooler_id VARCHAR(32) NOT NULL,
     day_of_week VARCHAR(16) NOT NULL,
     period_slot VARCHAR(16) NOT NULL,
     consumption_liters NUMERIC(8, 2) NOT NULL,
