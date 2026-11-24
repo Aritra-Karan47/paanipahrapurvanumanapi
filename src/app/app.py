@@ -51,6 +51,7 @@ from model.preprocessing import (
 )
 from temp_control.controller import TemperatureController
 from weather.service import fetch_live_weather
+from db import CoolerRepository, is_db_configured
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("water-demand-app")
@@ -64,11 +65,17 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------------------------------------------
 predictor = WaterDemandPredictor(model_dir=MODEL_DIR)
 temp_ctrl = TemperatureController()
+db_repo = CoolerRepository()
 _is_bootstrapped: bool = False
 
 
 def bootstrap(force: bool = False) -> Dict[str, Any]:
-    """Load institute data and fit baseline at startup (idempotent)."""
+    """Load institute data and fit baseline at startup (idempotent).
+
+    Tries fetching from Neon Serverless Postgres if DATABASE_URL is configured.
+    Seamlessly falls back to local data/ CSV and Parquet files when database
+    is offline, unconfigured, or in local test environments.
+    """
     global _is_bootstrapped
     if _is_bootstrapped and not force:
         return {"status": "already_bootstrapped", "is_bootstrapped": True}
@@ -77,39 +84,64 @@ def bootstrap(force: bool = False) -> Dict[str, Any]:
         "cooler_configs_loaded": 0,
         "baseline_fitted": False,
         "temperature_rules_loaded": 0,
+        "data_source": "local_files",
     }
     try:
-        cooler_path = DATA_DIR / "cooler_config.csv"
-        if cooler_path.exists():
-            meta = load_cooler_config(cooler_path)
-            predictor.load_cooler_meta(meta)
-            status["cooler_configs_loaded"] = len(meta)
-            logger.info("Loaded %d cooler configs", len(meta))
+        # 1. Attempt loading from Neon Postgres if configured
+        if db_repo.is_connected():
+            logger.info("Bootstrap: Fetching datasets from Neon Serverless Postgres...")
+            db_meta = db_repo.fetch_cooler_config()
+            if db_meta:
+                predictor.load_cooler_meta(db_meta)
+                status["cooler_configs_loaded"] = len(db_meta)
+                status["data_source"] = "neon_postgres"
 
-        cons_path = DATA_DIR / "Cooler_Water_Consumption_Record.csv"
-        if not cons_path.exists():
-            cons_path = DATA_DIR / "Cooler_Water_Consumption_Record.xlsx"
-        if cons_path.exists():
-            df = load_consumption_record(cons_path)
-            # Real multi-week data is fitted into baseline; CatBoost runs from persisted artifacts
-            info = predictor.fit_from_consumption(df, train_catboost=False)
-            status["baseline_fitted"] = info.get("baseline_fitted", False)
-            logger.info(
-                "Baseline fit: %s (CatBoost active=%s, n=%d)",
-                info,
-                predictor.catboost.trained,
-                predictor.catboost.n_train,
-            )
-        else:
-            logger.warning("No consumption record found – using engineered defaults only")
+            db_cons = db_repo.fetch_consumption_records()
+            if db_cons is not None and len(db_cons) > 0:
+                info = predictor.fit_from_consumption(db_cons, train_catboost=False)
+                status["baseline_fitted"] = info.get("baseline_fitted", False)
+                status["data_source"] = "neon_postgres"
+                logger.info("Baseline fitted from Neon Postgres (%d records)", len(db_cons))
 
-        temp_path = DATA_DIR / "Water_Temperature_Control_Table.parquet"
-        if not temp_path.exists():
-            temp_path = DATA_DIR / "Water_Temperature_Control_Table.xlsx"
-        if temp_path.exists():
-            temp_ctrl.load_from_file(temp_path)
-            status["temperature_rules_loaded"] = len(temp_ctrl.rules)
-            logger.info("Temperature control table loaded from %s", temp_path)
+            db_rules = db_repo.fetch_temperature_rules()
+            if db_rules:
+                temp_ctrl.rules = db_rules
+                status["temperature_rules_loaded"] = len(db_rules)
+
+        # 2. Graceful fallback to local CSV/Parquet files if DB did not populate
+        if status["cooler_configs_loaded"] == 0:
+            cooler_path = DATA_DIR / "cooler_config.csv"
+            if cooler_path.exists():
+                meta = load_cooler_config(cooler_path)
+                predictor.load_cooler_meta(meta)
+                status["cooler_configs_loaded"] = len(meta)
+                logger.info("Loaded %d cooler configs from %s", len(meta), cooler_path.name)
+
+        if not status["baseline_fitted"]:
+            cons_path = DATA_DIR / "Cooler_Water_Consumption_Record.csv"
+            if not cons_path.exists():
+                cons_path = DATA_DIR / "Cooler_Water_Consumption_Record.xlsx"
+            if cons_path.exists():
+                df = load_consumption_record(cons_path)
+                info = predictor.fit_from_consumption(df, train_catboost=False)
+                status["baseline_fitted"] = info.get("baseline_fitted", False)
+                logger.info(
+                    "Baseline fit from local file: %s (CatBoost active=%s, n=%d)",
+                    info,
+                    predictor.catboost.trained,
+                    predictor.catboost.n_train,
+                )
+            else:
+                logger.warning("No consumption record found – using engineered defaults only")
+
+        if status["temperature_rules_loaded"] == 0:
+            temp_path = DATA_DIR / "Water_Temperature_Control_Table.parquet"
+            if not temp_path.exists():
+                temp_path = DATA_DIR / "Water_Temperature_Control_Table.xlsx"
+            if temp_path.exists():
+                temp_ctrl.load_from_file(temp_path)
+                status["temperature_rules_loaded"] = len(temp_ctrl.rules)
+                logger.info("Temperature control table loaded from %s", temp_path)
 
         _is_bootstrapped = True
         status["status"] = "success"
@@ -333,6 +365,43 @@ def service_live_weather(payload: Dict[str, Any]) -> Dict[str, Any]:
     lon = payload.get("longitude")
     force = bool(payload.get("force_refresh", False))
     return fetch_live_weather(city=city, lat=lat, lon=lon, force_refresh=force)
+
+
+def service_record_consumption(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Record IoT water meter consumption telemetry into Neon Postgres."""
+    cooler_id = payload.get("cooler_id")
+    day_of_week = payload.get("day_of_week", "Monday")
+    period_slot = payload.get("period_slot", "P1")
+    liters = payload.get("consumption_liters")
+
+    if not cooler_id:
+        return {"success": False, "error": "cooler_id is required"}
+    if liters is None or float(liters) < 0:
+        return {"success": False, "error": "consumption_liters must be >= 0"}
+
+    record_id = db_repo.insert_consumption_record(
+        cooler_id=str(cooler_id),
+        day_of_week=str(day_of_week),
+        period_slot=str(period_slot),
+        consumption_liters=float(liters),
+    )
+    if record_id is not None:
+        return {
+            "success": True,
+            "record_id": record_id,
+            "message": f"Recorded {liters} L for cooler {cooler_id} on {day_of_week} {period_slot} in Neon DB.",
+            "source": "Neon Serverless Postgres",
+        }
+    return {
+        "success": False,
+        "error": "Failed to persist into database (database may be unconfigured or offline)",
+        "source": "local",
+    }
+
+
+def service_db_status() -> Dict[str, Any]:
+    """Check Neon Postgres connectivity and table telemetry counts."""
+    return db_repo.get_db_health()
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +679,17 @@ def _attach_api(blocks: gr.Blocks) -> None:
         @app.get("/api/live_weather")
         async def api_weather_get(city: str = "New Delhi", force_refresh: bool = False):
             return JSONResponse(service_live_weather({"city": city, "force_refresh": force_refresh}))
+
+        @app.get("/api/db_status")
+        async def api_db_status():
+            result = await run_in_threadpool(service_db_status)
+            return JSONResponse(result)
+
+        @app.post("/api/telemetry/consumption")
+        async def api_record_consumption(request: Request):
+            body = await request.json()
+            result = await run_in_threadpool(service_record_consumption, body)
+            return JSONResponse(result)
 
         logger.info("REST API routes attached under /api/*")
     except Exception as exc:
