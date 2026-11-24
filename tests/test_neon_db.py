@@ -37,6 +37,27 @@ def test_database_url_normalization():
         assert "sslmode=require" not in url_local
 
 
+def test_database_url_from_decomposed_pg_vars():
+    """Verify that decomposed PG* environment variables reconstruct a valid Neon URL."""
+    env_vars = {
+        "PGHOST": "ep-cool-fog-123.us-east-2.aws.neon.tech",
+        "PGDATABASE": "neondb",
+        "PGUSER": "neondb_owner",
+        "PGPASSWORD": "secretpassword",
+        "PGPORT": "5432",
+        "PGSSLMODE": "require",
+    }
+    with patch.dict(os.environ, env_vars, clear=False):
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("NEON_DATABASE_URL", None)
+        os.environ.pop("POSTGRES_URL", None)
+
+        url = get_database_url()
+        assert url is not None
+        assert "neondb_owner:secretpassword@ep-cool-fog-123.us-east-2.aws.neon.tech:5432/neondb" in url
+        assert "sslmode=require" in url
+
+
 def test_is_db_configured_and_health_unconfigured():
     """Verify behavior when no DATABASE_URL is set (default dev & CI mode)."""
     with patch.dict(os.environ, {}, clear=True):

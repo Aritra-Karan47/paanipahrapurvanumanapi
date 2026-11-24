@@ -7,6 +7,12 @@ import os
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -27,7 +33,10 @@ class DatabaseNotConfiguredError(Exception):
 def get_database_url() -> Optional[str]:
     """Retrieve and normalize the PostgreSQL / Neon database connection URL.
 
-    Checks: DATABASE_URL, NEON_DATABASE_URL, POSTGRES_URL.
+    Checks:
+    1. Direct URL env vars: DATABASE_URL, NEON_DATABASE_URL, POSTGRES_URL.
+    2. Decomposed env vars: PGHOST, PGDATABASE, PGUSER, PGPASSWORD, PGPORT, PGSSLMODE.
+
     Normalizes 'postgres://' scheme to 'postgresql://' and ensures 'sslmode=require'
     for Neon Postgres endpoints.
     """
@@ -36,6 +45,18 @@ def get_database_url() -> Optional[str]:
         or os.environ.get("NEON_DATABASE_URL")
         or os.environ.get("POSTGRES_URL")
     )
+
+    if not raw_url and os.environ.get("PGHOST"):
+        pghost = os.environ.get("PGHOST", "").strip()
+        pgdatabase = os.environ.get("PGDATABASE", "neondb").strip()
+        pguser = os.environ.get("PGUSER", "").strip()
+        pgpassword = os.environ.get("PGPASSWORD", "").strip()
+        pgport = os.environ.get("PGPORT", "5432").strip()
+        pgsslmode = os.environ.get("PGSSLMODE", "require").strip()
+
+        user_auth = f"{pguser}:{pgpassword}@" if (pguser or pgpassword) else ""
+        raw_url = f"postgresql://{user_auth}{pghost}:{pgport}/{pgdatabase}?sslmode={pgsslmode}"
+
     if not raw_url or not raw_url.strip():
         return None
 
