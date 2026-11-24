@@ -62,35 +62,65 @@ def seed_coolers(conn, data_dir: Path, force: bool = False) -> int:
     logger.info("Parsed %d coolers from %s", len(meta), cooler_path.name)
 
     with conn.cursor() as cur:
-        if force:
-            cur.execute("DELETE FROM coolers")
+        # Check if locations table exists (IoT schema)
+        cur.execute("SELECT to_regclass('public.locations') AS loc_tbl")
+        has_locations = bool(cur.fetchone().get("loc_tbl"))
 
         inserted = 0
-        for cid, cfg in meta.items():
-            cur.execute(
-                """
-                INSERT INTO coolers (cooler_id, location, capacity_liters, floor, near_games, current_level_liters)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (cooler_id) DO UPDATE SET
-                    location = EXCLUDED.location,
-                    capacity_liters = EXCLUDED.capacity_liters,
-                    floor = EXCLUDED.floor,
-                    near_games = EXCLUDED.near_games,
-                    current_level_liters = EXCLUDED.current_level_liters,
-                    updated_at = NOW()
-                """,
-                (
-                    cid,
-                    cfg.get("location", "unknown"),
-                    float(cfg.get("capacity_liters", 200)),
-                    int(cfg.get("floor", 0)),
-                    bool(cfg.get("near_games", False)),
-                    cfg.get("current_level_liters"),
-                ),
-            )
-            inserted += 1
+        if has_locations:
+            for cid, cfg in meta.items():
+                cap = float(cfg.get("capacity_liters", 200))
+                floor = int(cfg.get("floor", 0))
+                near_games = bool(cfg.get("near_games", False))
+                loc_desc = cfg.get("location", "unknown")
 
-    logger.info("Seeded %d coolers.", inserted)
+                cur.execute(
+                    """
+                    UPDATE coolers c
+                    SET 
+                        tank_capacity_litre = %s,
+                        capacity_liters = %s,
+                        floor = %s,
+                        near_games = %s,
+                        location = %s,
+                        last_updated_at = NOW(),
+                        updated_at = NOW()
+                    FROM locations l
+                    WHERE c.location_id = l.location_id AND l.location_name = %s
+                    """,
+                    (cap, cap, floor, near_games, loc_desc, cid),
+                )
+                if cur.rowcount > 0:
+                    inserted += cur.rowcount
+        else:
+            if force:
+                cur.execute("DELETE FROM coolers")
+
+            for cid, cfg in meta.items():
+                cur.execute(
+                    """
+                    INSERT INTO coolers (cooler_id, location, capacity_liters, floor, near_games, current_level_liters)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (cooler_id) DO UPDATE SET
+                        location = EXCLUDED.location,
+                        capacity_liters = EXCLUDED.capacity_liters,
+                        floor = EXCLUDED.floor,
+                        near_games = EXCLUDED.near_games,
+                        current_level_liters = EXCLUDED.current_level_liters,
+                        updated_at = NOW()
+                    """,
+                    (
+                        cid,
+                        cfg.get("location", "unknown"),
+                        float(cfg.get("capacity_liters", 200)),
+                        int(cfg.get("floor", 0)),
+                        bool(cfg.get("near_games", False)),
+                        cfg.get("current_level_liters"),
+                    ),
+                )
+                inserted += 1
+
+    logger.info("Seeded/Updated %d coolers.", inserted)
     return inserted
 
 
@@ -142,9 +172,13 @@ def seed_consumption(conn, data_dir: Path, force: bool = False) -> int:
 
 def seed_timetable(conn, data_dir: Path, force: bool = False) -> int:
     """Seed 'school_timetable' table from School_Timetable.csv / xlsx."""
-    tt_path = data_dir / "School_Timetable.csv"
+    tt_path = data_dir / "School_Timetable_With_Recess.xlsx"
+    if not tt_path.exists():
+        tt_path = data_dir / "School_Timetable_With_Recess.csv"
     if not tt_path.exists():
         tt_path = data_dir / "School_Timetable.xlsx"
+    if not tt_path.exists():
+        tt_path = data_dir / "School_Timetable.csv"
     if not tt_path.exists():
         logger.warning("No timetable file found in %s", data_dir)
         return 0

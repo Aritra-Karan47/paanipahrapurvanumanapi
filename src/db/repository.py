@@ -47,14 +47,31 @@ class CoolerRepository:
         try:
             with self._conn_factory() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT cooler_id, location, capacity_liters, floor, near_games, current_level_liters
-                        FROM coolers
-                        ORDER BY cooler_id
-                        """
-                    )
-                    rows = cur.fetchall()
+                    try:
+                        cur.execute(
+                            """
+                            SELECT 
+                                COALESCE(l.location_name, c.cooler_id::text) AS cooler_id,
+                                COALESCE(c.location, l.location_name, l.building || ' ' || l.block_floor_wing_room_no, 'unknown') AS location,
+                                COALESCE(c.capacity_liters, c.tank_capacity_litre, 200.0) AS capacity_liters,
+                                COALESCE(c.floor, 0) AS floor,
+                                COALESCE(c.near_games, false) AS near_games,
+                                COALESCE(c.current_level_liters, c.last_updated_water_level) AS current_level_liters
+                            FROM coolers c
+                            LEFT JOIN locations l ON l.location_id = c.location_id
+                            ORDER BY c.cooler_id
+                            """
+                        )
+                        rows = cur.fetchall()
+                    except Exception:
+                        cur.execute(
+                            """
+                            SELECT cooler_id, location, capacity_liters, floor, near_games, current_level_liters
+                            FROM coolers
+                            ORDER BY cooler_id
+                            """
+                        )
+                        rows = cur.fetchall()
                     if not rows:
                         logger.warning("Neon DB 'coolers' table is empty.")
                         return None
@@ -184,13 +201,22 @@ class CoolerRepository:
 
                     rules = []
                     for r in rows:
+                        t_min = float(r["outdoor_temp_min"])
+                        t_max = float(r["outdoor_temp_max"])
+                        t_target = float(r["target_water_temp_c"])
+                        cooling = bool(r.get("cooling_enabled", True))
+                        r_name = str(r["rule_name"])
                         rules.append(
                             {
-                                "temp_min": float(r["outdoor_temp_min"]),
-                                "temp_max": float(r["outdoor_temp_max"]),
-                                "target_c": float(r["target_water_temp_c"]),
-                                "cooling_enabled": bool(r.get("cooling_enabled", True)),
-                                "rule_name": str(r["rule_name"]),
+                                "ambient_min_c": t_min,
+                                "ambient_max_c": t_max,
+                                "temp_min": t_min,
+                                "temp_max": t_max,
+                                "target_c": t_target,
+                                "target_water_temp_c": t_target,
+                                "cooling_enabled": cooling,
+                                "rule_name": r_name,
+                                "notes": r_name,
                             }
                         )
                     logger.info("Fetched %d temperature control rules from Neon Postgres", len(rules))
