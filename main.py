@@ -35,6 +35,8 @@ from app.app import (
     service_validate_data,
     service_model_info,
     service_live_weather,
+    service_record_consumption,
+    service_db_status,
 )
 
 logger = logging.getLogger("water-demand-api")
@@ -138,6 +140,21 @@ async def api_weather_post(request: Request):
 async def api_weather_get(city: str = "New Delhi", force_refresh: bool = False):
     """Fetch live ambient temperature for a given city with 8-hour cache."""
     result = await run_in_threadpool(service_live_weather, {"city": city, "force_refresh": force_refresh})
+    return JSONResponse(result)
+
+
+@app.get("/api/db_status", tags=["Database & Health"])
+async def api_db_status():
+    """Retrieve Neon Postgres connection state and table row counts."""
+    result = await run_in_threadpool(service_db_status)
+    return JSONResponse(result)
+
+
+@app.post("/api/telemetry/consumption", tags=["IoT Telemetry"])
+async def api_record_consumption(request: Request):
+    """Log IoT water meter consumption telemetry directly into Neon Postgres."""
+    body = await request.json()
+    result = await run_in_threadpool(service_record_consumption, body)
     return JSONResponse(result)
 
 
