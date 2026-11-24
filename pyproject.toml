@@ -7,7 +7,7 @@ name = "cooler-demand"
 version = "0.1.0"
 description = "School Water Cooler Demand Prediction SDK – communicates with Hugging Face inference service"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 license = {text = "MIT"}
 authors = [{name = "School Water Demand Team"}]
 keywords = ["water", "demand", "prediction", "school", "cooler", "catboost"]
