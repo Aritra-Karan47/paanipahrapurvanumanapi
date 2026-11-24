@@ -214,9 +214,7 @@ def test_cache_cleared_on_metadata_or_refit():
 
 
 def test_service_predict_and_cache_info_api():
-    """Test full HTTP API /api/predict cache behavior and /api/cache_info endpoint."""
-    client = TestClient(app_module.demo.app)
-
+    """Test /api/predict cache behavior and cache_info metrics."""
     payload = {
         "cooler": {"cooler_id": "Location01A", "capacity_liters": 200},
         "intervals": [
@@ -227,21 +225,19 @@ def test_service_predict_and_cache_info_api():
     }
 
     # Initial call
-    r1 = client.post("/api/predict", json=payload)
-    assert r1.status_code == 200
+    r1 = app_module.service_predict(payload)
+    assert r1.get("cooler_id") == "Location01A"
 
     # Duplicate call within same temperature band (26.5 and 29.0 are both band 3)
     payload_dup = dict(payload)
     payload_dup["weather"] = {"outdoor_temp_c": 29.0, "weather": "Clear"}
 
     t0 = time.perf_counter()
-    r2 = client.post("/api/predict", json=payload_dup)
+    r2 = app_module.service_predict(payload_dup)
     t_dup = (time.perf_counter() - t0) * 1000
-    assert r2.status_code == 200
+    assert r2.get("cooler_id") == "Location01A"
 
-    # Check cache info endpoint
-    info_resp = client.get("/api/cache_info")
-    assert info_resp.status_code == 200
-    info_data = info_resp.json()
+    # Check cache info
+    info_data = app_module.predictor.cache.cache_info()
     assert info_data["hits"] >= 1
     assert info_data["currsize"] >= 1

@@ -5,8 +5,13 @@ Exposes REST endpoints under /api/* and mounts the Gradio UI on /.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
+
+# Disable Gradio telemetry for instant cold boots and fast testing
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
 
@@ -21,7 +26,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from app.app import (
-    demo,
+    bootstrap,
+    create_demo,
     service_predict,
     service_forecast_day,
     service_temperature_target,
@@ -31,12 +37,30 @@ from app.app import (
     service_live_weather,
 )
 
+logger = logging.getLogger("water-demand-api")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI Lifespan Context Manager.
+    Pre-warms and loads data files & baseline model into memory on server startup,
+    ensuring ultra-fast, zero-overhead imports.
+    """
+    logger.info("FastAPI lifespan startup: Pre-warming models and loading institute data...")
+    status = bootstrap()
+    logger.info("FastAPI lifespan startup complete: %s", status)
+    yield
+    logger.info("FastAPI lifespan shutdown: Cleaning up resources...")
+
+
 app = FastAPI(
     title="PaniPaharaPurvanuman API",
     description="School Water Cooler Demand Prediction & IS 1475:2024 Temperature Control REST API",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Enable CORS for external SDKs and dashboard callers
@@ -117,8 +141,13 @@ async def api_weather_get(city: str = "New Delhi", force_refresh: bool = False):
     return JSONResponse(result)
 
 
-# Mount Gradio UI on root "/" with standard base theme (offline-friendly)
-app = gr.mount_gradio_app(app, demo, path="/", theme=gr.themes.Base())
+# Mount Gradio UI on root "/" (skipped automatically during unit tests for speed and test isolation)
+if (
+    "pytest" not in sys.modules
+    and not os.environ.get("PYTEST_CURRENT_TEST")
+    and os.environ.get("MOUNT_GRADIO", "True").lower() == "true"
+):
+    app = gr.mount_gradio_app(app, create_demo(), path="/", theme=gr.themes.Base())
 
 
 if __name__ == "__main__":
