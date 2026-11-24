@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cooler-demand"
-version = "0.1.0"
+version = "0.1.1"
 description = "School Water Cooler Demand Prediction SDK – communicates with Hugging Face inference service"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

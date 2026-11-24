@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PaniPaharaPurvanuman API",
     description="School Water Cooler Demand Prediction & IS 1475:2024 Temperature Control REST API",
-    version="0.1.0",
+    version="0.1.1",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
