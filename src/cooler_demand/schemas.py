@@ -124,7 +124,7 @@ class PredictionResponse(BaseModel):
 
 class ForecastDayRequest(BaseModel):
     cooler: CoolerInfo
-    day_of_week: str
+    day_of_week: Optional[str] = "Monday"
     intervals: List[IntervalContext]
     weather: WeatherContext
     historical: Optional[List[HistoricalPoint]] = None
@@ -134,6 +134,7 @@ class ForecastDayRequest(BaseModel):
     )
     model_preference: str = "auto"
     request_id: Optional[str] = None
+    use_cache: bool = True
 
 
 class ShortageRisk(BaseModel):
