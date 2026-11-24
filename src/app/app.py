@@ -511,6 +511,92 @@ def ui_info():
 _demo_instance: Optional[gr.Blocks] = None
 
 
+def _attach_api(blocks: gr.Blocks) -> None:
+    try:
+        if getattr(blocks, "_api_attached", False):
+            return
+        blocks._api_attached = True
+
+        from fastapi import Request
+        from fastapi.responses import JSONResponse
+        from fastapi.middleware.gzip import GZipMiddleware
+        try:
+            from fastapi.concurrency import run_in_threadpool
+        except ImportError:
+            import asyncio
+            run_in_threadpool = asyncio.to_thread  # type: ignore
+
+        app = blocks.app
+
+        # Enable Gzip compression middleware (500-byte threshold) for low-bandwidth school networks
+        has_gzip = any(
+            getattr(m, "cls", None) is GZipMiddleware or isinstance(m, GZipMiddleware)
+            for m in getattr(app, "user_middleware", [])
+        )
+        if not has_gzip:
+            app.add_middleware(GZipMiddleware, minimum_size=500)
+            logger.info("Attached GZipMiddleware with minimum_size=500 bytes")
+
+        @app.post("/api/predict")
+        async def api_predict(request: Request):
+            body = await request.json()
+            result = await run_in_threadpool(service_predict, body)
+            return JSONResponse(result)
+
+        @app.post("/api/forecast_day")
+        async def api_forecast(request: Request):
+            body = await request.json()
+            result = await run_in_threadpool(service_forecast_day, body)
+            return JSONResponse(result)
+
+        @app.post("/api/temperature_target")
+        async def api_temp(request: Request):
+            body = await request.json()
+            return JSONResponse(service_temperature_target(body))
+
+        @app.post("/api/check_shortage")
+        async def api_shortage(request: Request):
+            body = await request.json()
+            return JSONResponse(service_check_shortage(body))
+
+        @app.post("/api/validate_data")
+        async def api_validate(request: Request):
+            body = await request.json()
+            return JSONResponse(service_validate_data(body))
+
+        @app.get("/api/model_info")
+        async def api_info():
+            return JSONResponse(service_model_info())
+
+        @app.get("/api/cache_info")
+        async def api_cache_info():
+            return JSONResponse(predictor.cache.cache_info())
+
+        @app.post("/api/live_weather")
+        async def api_weather(request: Request):
+            body = await request.json()
+            return JSONResponse(service_live_weather(body))
+
+        @app.get("/api/live_weather")
+        async def api_weather_get(city: str = "New Delhi", force_refresh: bool = False):
+            return JSONResponse(service_live_weather({"city": city, "force_refresh": force_refresh}))
+
+        @app.get("/api/db_status")
+        async def api_db_status():
+            result = await run_in_threadpool(service_db_status)
+            return JSONResponse(result)
+
+        @app.post("/api/telemetry/consumption")
+        async def api_record_consumption(request: Request):
+            body = await request.json()
+            result = await run_in_threadpool(service_record_consumption, body)
+            return JSONResponse(result)
+
+        logger.info("REST API routes attached under /api/*")
+    except Exception as exc:
+        logger.warning("Could not attach FastAPI routes (UI-only mode): %s", exc)
+
+
 def create_demo() -> gr.Blocks:
     global _demo_instance
     if _demo_instance is not None:
@@ -616,6 +702,7 @@ def create_demo() -> gr.Blocks:
         # Spaces; for local we also register them here if possible.
 
     _demo_instance = demo
+    _attach_api(demo)
     return _demo_instance
 
 
@@ -624,79 +711,8 @@ def __getattr__(name: str) -> Any:
         return create_demo()
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-def _attach_api(blocks: gr.Blocks) -> None:
-    try:
-        from fastapi import Request
-        from fastapi.responses import JSONResponse
-        try:
-            from fastapi.concurrency import run_in_threadpool
-        except ImportError:
-            import asyncio
-            run_in_threadpool = asyncio.to_thread  # type: ignore
-
-        app = blocks.app
-
-        @app.post("/api/predict")
-        async def api_predict(request: Request):
-            body = await request.json()
-            result = await run_in_threadpool(service_predict, body)
-            return JSONResponse(result)
-
-        @app.post("/api/forecast_day")
-        async def api_forecast(request: Request):
-            body = await request.json()
-            result = await run_in_threadpool(service_forecast_day, body)
-            return JSONResponse(result)
-
-        @app.post("/api/temperature_target")
-        async def api_temp(request: Request):
-            body = await request.json()
-            return JSONResponse(service_temperature_target(body))
-
-        @app.post("/api/check_shortage")
-        async def api_shortage(request: Request):
-            body = await request.json()
-            return JSONResponse(service_check_shortage(body))
-
-        @app.post("/api/validate_data")
-        async def api_validate(request: Request):
-            body = await request.json()
-            return JSONResponse(service_validate_data(body))
-
-        @app.get("/api/model_info")
-        async def api_info():
-            return JSONResponse(service_model_info())
-
-        @app.get("/api/cache_info")
-        async def api_cache_info():
-            return JSONResponse(predictor.cache.cache_info())
-
-        @app.post("/api/live_weather")
-        async def api_weather(request: Request):
-            body = await request.json()
-            return JSONResponse(service_live_weather(body))
-
-        @app.get("/api/live_weather")
-        async def api_weather_get(city: str = "New Delhi", force_refresh: bool = False):
-            return JSONResponse(service_live_weather({"city": city, "force_refresh": force_refresh}))
-
-        @app.get("/api/db_status")
-        async def api_db_status():
-            result = await run_in_threadpool(service_db_status)
-            return JSONResponse(result)
-
-        @app.post("/api/telemetry/consumption")
-        async def api_record_consumption(request: Request):
-            body = await request.json()
-            result = await run_in_threadpool(service_record_consumption, body)
-            return JSONResponse(result)
-
-        logger.info("REST API routes attached under /api/*")
-    except Exception as exc:
-        logger.warning("Could not attach FastAPI routes (UI-only mode): %s", exc)
-
 
 if __name__ == "__main__":
     bootstrap()
-    _attach_api(demo)
-    demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
+    demo_app = create_demo()
+    demo_app.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
