@@ -18,6 +18,7 @@ from typing import Any, Dict
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import gradio as gr
 
@@ -73,6 +74,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Enable Gzip compression middleware (500-byte threshold) for low-bandwidth school networks
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 @app.get("/health", tags=["Health"])
