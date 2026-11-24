@@ -248,7 +248,7 @@ def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str
         "model_version": predictor.version,
         "fallback_used": fallback,
         "warnings": [],
-        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -288,7 +288,7 @@ def service_temperature_target(payload: Dict[str, Any]) -> Dict[str, Any]:
         "action": result.get("action"),
         "notes": result.get("notes"),
         "model_version": "temp-control-v1",
-        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -307,7 +307,7 @@ def service_check_shortage(payload: Dict[str, Any]) -> Dict[str, Any]:
         "projected_level": result["projected_level_after_day"],
         "shortage_liters": result["shortage_liters"],
         "message": result["message"],
-        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -540,12 +540,22 @@ def _attach_api(blocks: gr.Blocks) -> None:
         @app.post("/api/predict")
         async def api_predict(request: Request):
             body = await request.json()
+            try:
+                from cooler_demand.schemas import PredictionRequest
+                PredictionRequest.model_validate(body)
+            except Exception as exc:
+                return JSONResponse(status_code=422, content={"detail": str(exc)})
             result = await run_in_threadpool(service_predict, body)
             return JSONResponse(result)
 
         @app.post("/api/forecast_day")
         async def api_forecast(request: Request):
             body = await request.json()
+            try:
+                from cooler_demand.schemas import ForecastDayRequest
+                ForecastDayRequest.model_validate(body)
+            except Exception as exc:
+                return JSONResponse(status_code=422, content={"detail": str(exc)})
             result = await run_in_threadpool(service_forecast_day, body)
             return JSONResponse(result)
 

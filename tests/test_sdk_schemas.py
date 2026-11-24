@@ -19,7 +19,12 @@ from cooler_demand.schemas import (
     ShortageCheckRequest,
     ValidateDataRequest,
 )
-from cooler_demand.client import CoolerDemandClient
+from cooler_demand.client import (
+    CoolerDemandClient,
+    WaterDemandClient,
+    AsyncWaterDemandClient,
+    AsyncCoolerDemandClient,
+)
 
 
 def test_interval_infers_recess():
@@ -52,6 +57,25 @@ def test_client_construct():
     c = CoolerDemandClient(base_url="http://localhost:7860")
     assert c.base_url == "http://localhost:7860"
     c.close()
+
+    # Verify alias
+    wc = WaterDemandClient(base_url="http://localhost:7860")
+    assert wc.base_url == "http://localhost:7860"
+    wc.close()
+
+
+def test_async_client_construct():
+    import asyncio
+
+    ac = AsyncWaterDemandClient(base_url="http://localhost:7860")
+    assert ac.base_url == "http://localhost:7860"
+    asyncio.run(ac.close())
+
+    # Verify alias
+    acc = AsyncCoolerDemandClient(base_url="http://localhost:7860")
+    assert acc.base_url == "http://localhost:7860"
+    asyncio.run(acc.close())
+
 
 
 def test_shortage_schema():
