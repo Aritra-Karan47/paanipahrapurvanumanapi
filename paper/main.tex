@@ -29,13 +29,14 @@
 \title{PaniPahara: Smart Drinking Water Demand Prediction and Energy-Efficient Cooler Control for School Campuses}
 
 \author{
-\IEEEauthorblockN{Abhiraj Adhikary\IEEEauthorrefmark{1}, Aritra Karan\IEEEauthorrefmark{1}, Anuj Kumar Yadav\IEEEauthorrefmark{2}, and Yashvardhan Yadav\IEEEauthorrefmark{2}}
+\IEEEauthorblockN{Abhiraj Adhikary\IEEEauthorrefmark{1}, Aritra Karan\IEEEauthorrefmark{1}, Anuj Kumar\IEEEauthorrefmark{2}, and Yashvardhan Yadav\IEEEauthorrefmark{2}}
 \vspace{0.4em}
 \IEEEauthorblockA{\IEEEauthorrefmark{1}Department of Computer Science and Engineering (Data Science), Haldia Institute of Technology, Haldia, India\\
 Email: abhirajadhikary06@gmail.com, aritrakaran234@gmail.com}
 \vspace{0.2em}
-\IEEEauthorblockA{\IEEEauthorrefmark{2}Kendriya Vidyalaya IIT Kharagpur, Kharagpur, India\\
-Roles: PGT Computer Science (A. K. Yadav); Student, Computer Science (2025--27) (Y. Yadav)}
+\IEEEauthorblockA{\IEEEauthorrefmark{2}PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur, Kharagpur, India\\
+Roles: PGT Computer Science (A. Kumar); Computer Science (2025--27) (Y. Yadav)\\
+Email: anujkyadav@gmail.com, yashvardhanyadav09@gmail.com}
 }
 
 \maketitle
@@ -58,7 +59,7 @@ Providing clean drinking water at comfortable temperatures is essential for stud
 
 Existing water forecasting studies typically examine entire cities or municipal water utilities using hourly or daily data~\cite{donkor2014urban, herrera2010predicting}. These models do not work for school campuses because they do not account for school bell schedules, class timetables, and sudden 20-minute recess rushes.
 
-To address both problems, we developed \textbf{PaniPahara}, a complete smart water management system tested on the campus of Kendriya Vidyalaya IIT Kharagpur. The system features:
+To address both problems, we developed \textbf{PaniPahara}, a complete smart water management system tested on the campus of PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur. The system features:
 
 \begin{itemize}
     \item \textbf{Dual-Quantile CatBoost Forecasting:} Predicts both the expected median consumption ($Q_{0.50}$) for inventory tracking and a conservative upper reserve ($Q_{0.90}$) to warn staff before a tank runs dry.
@@ -124,7 +125,7 @@ The system monitors eight drinking water coolers located across academic wings a
 
 \begin{table}[!t]
 \centering
-\caption{Campus Water Cooler Infrastructure at KV IIT Kharagpur}
+\caption{Campus Water Cooler Infrastructure at PM SHRI KV No 1 IIT Kharagpur}
 \label{tab:coolers}
 \resizebox{\columnwidth}{!}{
 \begin{tabular}{llccc}
@@ -244,7 +245,7 @@ where $\rho = 1.0\,$kg/L, $C_p = 4.184\,$kJ/(kg$\cdot$K), and $\text{COP}$ is th
 \section{Experimental Results}
 
 \subsection{Dataset and Evaluation Setup}
-We evaluated PaniPahara on a dataset of $2,160$ verified period records collected across 8 coolers at Kendriya Vidyalaya IIT Kharagpur over five weeks:
+We evaluated PaniPahara on a dataset of $2,160$ verified period records collected across 8 coolers at PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur over five weeks:
 \begin{equation*}
 8 \text{ coolers} \times 9 \text{ periods/day} \times 6 \text{ days/week} \times 5 \text{ weeks} = 2,160 \text{ records}.
 \end{equation*}

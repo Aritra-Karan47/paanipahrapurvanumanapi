@@ -11,8 +11,8 @@ This directory contains the self-contained LaTeX source code and bibliography fo
 - **Authors:**  
   - **Abhiraj Adhikary** (Haldia Institute of Technology, Computer Science Engineering - Data Science, `abhirajadhikary06@gmail.com`)
   - **Aritra Karan** (Haldia Institute of Technology, Computer Science Engineering - Data Science, `aritrakaran234@gmail.com`)
-  - **Anuj Kumar Yadav** (Kendriya Vidyalaya IIT Kharagpur, PGT Computer Science)
-  - **Yashvardhan Yadav** (Kendriya Vidyalaya IIT Kharagpur, Computer Science 2025--27)
+  - **Anuj Kumar** (PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur, PGT Computer Science, `anujkyadav@gmail.com`)
+  - **Yashvardhan Yadav** (PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur, Computer Science 2025--27, `yashvardhanyadav09@gmail.com`)
 - **Format:** Strict IEEE Two-Column Conference/Journal Format (`IEEEtran.cls` v1.8b).
 - **Layout Safeguards:**
   - Standard IEEE author block with no column-overlapping.
