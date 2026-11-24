@@ -21,23 +21,21 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "httpx>=0.27.0",
-    "pydantic>=2.0",
-    "tenacity>=8.0",
-    "pandas>=2.0",
-    "numpy>=1.24",
-    "pyarrow>=14.0",
-]
-
-[project.optional-dependencies]
-model = [
+    "fastapi[standard]>=0.115.0",
+    "gradio>=4.0",
     "catboost>=1.2",
     "scikit-learn>=1.3",
     "openpyxl>=3.1",
-    "gradio>=4.0",
-    "fastapi[standard]>=0.115.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyarrow>=14.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0",
+    "tenacity>=8.0",
     "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -47,6 +45,9 @@ dev = [
 [project.urls]
 Homepage = "https://huggingface.co/spaces/yashvardhanyadav09/paanipahrapurvanumanapi"
 Repository = "https://github.com/yashvardhanyadav09/paanipahrapurvanumanapi"
+
+[tool.fastapi]
+entrypoint = "main:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
