@@ -82,8 +82,13 @@ def get_database_url() -> Optional[str]:
 
 
 def is_db_configured() -> bool:
-    """Return True if a database URL is present in the environment."""
-    return bool(get_database_url())
+    """Return True if a database URL is present in the environment and not a placeholder."""
+    url = get_database_url()
+    if not url:
+        return False
+    if "YOUR_PASSWORD" in url or "ep-example" in url:
+        return False
+    return True
 
 
 def get_db_connection(timeout: float = 5.0) -> Any:
