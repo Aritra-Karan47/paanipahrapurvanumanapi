@@ -31,11 +31,13 @@ jobs:
 
       - name: Deploy to FastAPI Cloud
         env:
-          FASTAPI_TOKEN: ${{ secrets.FASTAPI_CLOUD_TOKEN }}
-          FASTAPI_APP_ID: ${{ secrets.FASTAPI_CLOUD_APP_ID }}
+          FASTAPI_CLOUD_TOKEN: ${{ secrets.FASTAPI_CLOUD_TOKEN }}
+          FASTAPI_CLOUD_APP_ID: ${{ secrets.FASTAPI_CLOUD_APP_ID }}
         run: |
-          if [ -z "$FASTAPI_TOKEN" ]; then
-            echo "ERROR: FASTAPI_CLOUD_TOKEN secret is not set. Add it in GitHub Settings -> Secrets and variables -> Actions."
+          if [ -z "$FASTAPI_CLOUD_TOKEN" ]; then
+            echo "ERROR: FASTAPI_CLOUD_TOKEN secret is not set in GitHub Secrets."
+            echo "Get your token from the FastAPI Cloud Dashboard -> Tokens, then add it in:"
+            echo "GitHub Repo -> Settings -> Secrets and variables -> Actions -> New repository secret"
             exit 1
           fi
           fastapi deploy
