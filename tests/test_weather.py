@@ -1,7 +1,10 @@
 """Tests for Open-Meteo weather detection and 8-hour cache manager."""
 
+import concurrent.futures
+import json
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -83,3 +86,95 @@ def test_live_weather_schemas():
     )
     assert resp.outdoor_temp_c == 31.5
     assert resp.weather == "Humid"
+
+
+def test_weather_cache_concurrent_thread_writes(tmp_path):
+    """Verify that multiple concurrent threads writing to the weather cache do not cause race conditions or corruption."""
+    cache_file = tmp_path / "concurrent_weather_cache.json"
+    mgr = WeatherCacheManager(cache_file=cache_file, ttl_seconds=8 * 3600)
+
+    num_threads = 20
+    cities = [f"City_{i}" for i in range(num_threads)]
+
+    def worker(city_name: str, idx: int):
+        payload = {
+            "outdoor_temp_c": 20.0 + idx,
+            "weather": "Clear",
+            "humidity_pct": 50.0 + idx,
+            "station_info": f"Station {city_name}",
+            "location_name": city_name,
+            "latitude": 20.0 + idx,
+            "longitude": 70.0 + idx,
+        }
+        mgr.put(city_name, None, None, payload)
+        # Verify immediate read
+        cached = mgr.get(city_name, None, None)
+        assert cached is not None
+        assert cached["location_name"] == city_name
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(worker, city, i) for i, city in enumerate(cities)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+
+    # Disk cache should exist and be valid JSON
+    assert cache_file.exists()
+    with open(cache_file, "r", encoding="utf-8") as f:
+        disk_data = json.load(f)
+
+    # All cities should be in disk data
+    assert len(disk_data) == num_threads
+    for city in cities:
+        key = f"city_{city.lower()}"
+        assert key in disk_data
+        assert disk_data[key]["location_name"] == city
+
+    # Verify no temp files remain
+    tmp_files = list(tmp_path.glob("*.tmp.*"))
+    assert len(tmp_files) == 0
+
+
+def test_weather_cache_atomic_replace_preserves_on_failure(tmp_path):
+    """Verify that a disk write failure does not corrupt the existing cache and cleans up temp files."""
+    cache_file = tmp_path / "fail_safe_weather_cache.json"
+    mgr = WeatherCacheManager(cache_file=cache_file, ttl_seconds=8 * 3600)
+
+    # Save an initial valid entry
+    initial_payload = {
+        "outdoor_temp_c": 25.0,
+        "weather": "Clear",
+        "humidity_pct": 50.0,
+        "station_info": "Initial Station",
+        "location_name": "Initial City",
+        "latitude": 25.0,
+        "longitude": 75.0,
+    }
+    mgr.put("Initial City", None, None, initial_payload)
+
+    # Verify initial disk contents
+    with open(cache_file, "r", encoding="utf-8") as f:
+        data_before = json.load(f)
+    assert "city_initial city" in data_before
+
+    # Simulate a failure during disk sync/write
+    with patch("os.fsync", side_effect=OSError("Simulated disk I/O error")):
+        bad_payload = {
+            "outdoor_temp_c": 99.0,
+            "weather": "Rainy",
+            "humidity_pct": 99.0,
+            "station_info": "Bad Station",
+            "location_name": "Bad City",
+        }
+        # put calls _save_disk_cache internally which catches Exception and cleans up
+        mgr.put("Bad City", None, None, bad_payload)
+
+    # Verify the original disk file was NOT corrupted or overwritten
+    with open(cache_file, "r", encoding="utf-8") as f:
+        data_after = json.load(f)
+    assert "city_initial city" in data_after
+    assert "city_bad city" not in data_after  # atomic rename never happened
+
+    # Verify temp file was cleanly unlinked
+    tmp_files = list(tmp_path.glob("*.tmp.*"))
+    assert len(tmp_files) == 0
+
