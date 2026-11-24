@@ -29,6 +29,10 @@ from model.preprocessing import (
     load_consumption_record,
     load_cooler_config,
 )
+from model.validation import (
+    assign_school_weeks,
+    temporal_weekly_cross_validate,
+)
 from weather.service import (
     calculate_apparent_temperature,
     diurnal_humidity_for_slot,
@@ -114,8 +118,28 @@ def main() -> None:
         if c in X.columns:
             X[c] = X[c].fillna(X[c].median() if X[c].notna().any() else 0.0)
     y = feat_df["consumption_liters"].values
+    weeks = assign_school_weeks(feat_df)
 
-    # 80/20 train/holdout split (stratified / chronological)
+    # 1. Temporal Weekly Cross-Validation (TimeSeries expanding window across weeks)
+    logger.info("Executing Temporal Weekly Cross-Validation across %d school weeks...", len(np.unique(weeks)))
+    cv_summary = temporal_weekly_cross_validate(
+        X,
+        y,
+        weeks=weeks,
+        strategy="time_series",
+        min_train_weeks=2,
+        iterations=350,
+        target_coverage=90.0,
+    )
+    logger.info(
+        "Temporal CV Summary: Mean MAE=%.3f L (+/- %.3f), Mean P90 Coverage=%.2f%%, Mean Offset=+%.3f L",
+        cv_summary["mean_mae"],
+        cv_summary["std_mae"],
+        cv_summary["mean_calibrated_p90_coverage_pct"],
+        cv_summary["mean_calibration_offset"],
+    )
+
+    # 2. Validation model evaluating strictly on unseen Week 5
     split_idx = int(len(feat_df) * 0.80)
     X_train, y_train = X.iloc[:split_idx], y[:split_idx]
     X_val, y_val = X.iloc[split_idx:], y[split_idx:]
@@ -123,10 +147,8 @@ def main() -> None:
     logger.info("Training CatBoost models (train_n=%d, val_n=%d)...", len(X_train), len(X_val))
 
     catboost = CatBoostQuantileModel(model_dir=model_dir)
-    # Fit full dataset on final models
     from catboost import CatBoostRegressor
 
-    # 1. Validation models
     m_p50_val = CatBoostRegressor(
         loss_function="Quantile:alpha=0.50",
         iterations=350,
@@ -168,7 +190,7 @@ def main() -> None:
     mape = float(np.mean(np.abs((preds_p50 - y_val) / np.clip(y_val, 1e-3, None))) * 100)
     coverage_p90 = float(np.mean(y_val <= preds_p90) * 100)
 
-    logger.info("Holdout Validation Metrics:")
+    logger.info("Holdout Validation Metrics (Week 5 Unseen Test):")
     logger.info("  Holdout MAE: %.3f L", mae)
     logger.info("  Holdout MAPE: %.2f%%", mape)
     logger.info("  Raw P90 Coverage: %.2f%%", raw_coverage)
@@ -177,7 +199,7 @@ def main() -> None:
 
     assert coverage_p90 >= 90.0, f"P90 coverage {coverage_p90:.2f}% is below 90% target"
 
-    # 2. Train final production models on full 2,160 rows
+    # 3. Train final production models on full 2,160 rows
     logger.info("Fitting final production models on all %d rows...", len(X))
     prod_p50 = CatBoostRegressor(
         loss_function="Quantile:alpha=0.50",
@@ -219,6 +241,16 @@ def main() -> None:
             "holdout_mape_pct": round(mape, 2),
             "holdout_coverage_p90_pct": round(coverage_p90, 2),
             "p90_calibration_offset": round(p90_offset, 4),
+        },
+        "temporal_cv": {
+            "strategy": cv_summary["strategy"],
+            "n_folds": cv_summary["n_folds"],
+            "mean_mae": cv_summary["mean_mae"],
+            "std_mae": cv_summary["std_mae"],
+            "mean_mape_pct": cv_summary["mean_mape_pct"],
+            "mean_calibrated_p90_coverage_pct": cv_summary["mean_calibrated_p90_coverage_pct"],
+            "mean_calibration_offset": cv_summary["mean_calibration_offset"],
+            "folds": cv_summary["folds"],
         },
         "model_version": "water-demand-v0.1.0-catboost",
         "trained_on": "Cooler_Water_Consumption_Record.csv (5 weeks, 2160 rows)",

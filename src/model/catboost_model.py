@@ -104,16 +104,66 @@ class CatBoostQuantileModel:
         self.trained = True
         self.n_train = len(df)
 
-        # Simple hold-out metrics on last 20%
-        split = int(len(df) * 0.8)
-        if split > 50:
-            Xh, yh = X.iloc[split:], y[split:]
-            pred50 = self.p50.predict(Xh)
-            mae = float(np.mean(np.abs(pred50 - yh)))
-            mape = float(np.mean(np.abs((pred50 - yh) / np.clip(yh, 1e-3, None))) * 100)
-            self.metrics = {"holdout_mae": mae, "holdout_mape_pct": mape}
-            logger.info("CatBoost trained n=%d holdout_MAE=%.2f MAPE=%.1f%%", self.n_train, mae, mape)
+        # Temporal hold-out evaluation on the final unseen week to prevent leakage
+        if len(df) >= 200:
+            from .validation import assign_school_weeks
+            weeks = assign_school_weeks(df)
+            last_week = np.max(weeks)
+            val_mask = (weeks == last_week)
+            train_mask = (weeks < last_week)
+            if np.sum(train_mask) >= 50 and np.sum(val_mask) >= 20:
+                Xh, yh = X[val_mask], y[val_mask]
+                pred50 = np.clip(self.p50.predict(Xh), 0, None)
+                pred90_raw = np.clip(self.p90.predict(Xh), 0, None)
+                mae = float(np.mean(np.abs(pred50 - yh)))
+                mape = float(np.mean(np.abs((pred50 - yh) / np.clip(yh, 1e-3, None))) * 100)
+                raw_cov = float(np.mean(yh <= pred90_raw) * 100)
+                res = yh - pred90_raw
+                self.p90_offset = float(max(0.0, np.percentile(res, 91.0))) if raw_cov < 90.0 else 0.0
+                cal_cov = float(np.mean(yh <= (pred90_raw + self.p90_offset)) * 100)
+                self.metrics = {
+                    "holdout_mae": round(mae, 4),
+                    "holdout_mape_pct": round(mape, 2),
+                    "holdout_coverage_p90_pct": round(cal_cov, 2),
+                    "p90_calibration_offset": round(self.p90_offset, 4),
+                }
+                logger.info(
+                    "CatBoost trained n=%d temporal_holdout_MAE=%.2f MAPE=%.1f%% P90_Cov=%.1f%% (offset=+%.3fL)",
+                    self.n_train, mae, mape, cal_cov, self.p90_offset,
+                )
         return True
+
+    def cross_validate_temporal(
+        self,
+        df: pd.DataFrame,
+        strategy: str = "time_series",
+        min_train_weeks: int = 2,
+        rows_per_week: int = 432,
+    ) -> Dict[str, Any]:
+        """Execute temporal cross-validation grouped by school week."""
+        from .validation import temporal_weekly_cross_validate, assign_school_weeks
+
+        cols = self.feature_cols
+        missing = [c for c in cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"Missing feature columns: {missing}")
+
+        X = df[cols].copy()
+        for c in ["hist_mean", "hist_std"]:
+            if c in X.columns:
+                X[c] = X[c].fillna(X[c].median() if X[c].notna().any() else 0.0)
+        y = df["consumption_liters"].values
+        weeks = assign_school_weeks(df, rows_per_week=rows_per_week)
+
+        cv_results = temporal_weekly_cross_validate(
+            X,
+            y,
+            weeks=weeks,
+            strategy=strategy,
+            min_train_weeks=min_train_weeks,
+        )
+        self.metrics["temporal_cv"] = cv_results
+        return cv_results
 
     def predict(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         if not self.trained or self.p50 is None or self.p90 is None:
