@@ -48,6 +48,8 @@ class IntervalContext(BaseModel):
     games_intensity: GamesIntensity = GamesIntensity.NONE
     duration_minutes: int = Field(40, ge=5, le=120)
     subject: Optional[str] = None
+    outdoor_temp_c: Optional[float] = Field(None, ge=-20, le=55, description="Slot-specific temperature override in °C")
+    apparent_temp_c: Optional[float] = Field(None, ge=-20, le=70, description="Slot-specific apparent temperature override in °C")
 
     @field_validator("day_of_week")
     @classmethod
@@ -76,6 +78,7 @@ class WeatherContext(BaseModel):
     outdoor_temp_c: float = Field(..., ge=-20, le=55)
     weather: WeatherCondition = WeatherCondition.UNKNOWN
     humidity_pct: Optional[float] = Field(None, ge=0, le=100)
+    apparent_temp_c: Optional[float] = Field(None, ge=-20, le=70, description="Apparent temperature / Heat Index in °C")
 
 
 class HistoricalPoint(BaseModel):
@@ -220,6 +223,8 @@ class LiveWeatherRequest(BaseModel):
 class LiveWeatherResponse(BaseModel):
     success: bool
     outdoor_temp_c: float
+    apparent_temp_c: Optional[float] = None
+    heat_index_c: Optional[float] = None
     weather: str
     humidity_pct: float
     weather_code: int = 0

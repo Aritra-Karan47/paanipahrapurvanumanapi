@@ -185,6 +185,8 @@ class CatBoostQuantileModel:
                     self.n_train = meta.get("n_train", 2160)
                     self.metrics = meta.get("metrics", {})
                     self.p90_offset = float(self.metrics.get("p90_calibration_offset", 0.0))
+                    if "feature_cols" in meta and isinstance(meta["feature_cols"], list):
+                        self.feature_cols = meta["feature_cols"]
             except Exception:
                 self.n_train = 2160
                 self.p90_offset = 0.0

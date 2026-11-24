@@ -139,6 +139,7 @@ class HistoricalAverageBaseline:
         day_of_week: str,
         period_slot: str,
         outdoor_temp_c: float = 25.0,
+        apparent_temp_c: Optional[float] = None,
         games_intensity: str = "None",
         near_games: bool = False,
     ) -> Tuple[float, str, int]:
@@ -147,27 +148,28 @@ class HistoricalAverageBaseline:
         """
         day = day_of_week.capitalize()
         slot = period_slot
+        eff_temp = float(apparent_temp_c) if apparent_temp_c is not None else float(outdoor_temp_c)
 
         # 1
         key1 = (cooler_id, day, slot)
         if key1 in self._tables["c_d_s"] and self._counts["c_d_s"][key1] >= 1:
-            val = self._tables["c_d_s"][key1] * self._temp_factor(outdoor_temp_c)
+            val = self._tables["c_d_s"][key1] * self._temp_factor(eff_temp)
             return round(val, 2), "cooler_day_slot", self._counts["c_d_s"][key1]
 
         # 2
         key2 = (cooler_id, slot)
         if key2 in self._tables["c_s"] and self._counts["c_s"][key2] >= 1:
-            val = self._tables["c_s"][key2] * self._temp_factor(outdoor_temp_c)
+            val = self._tables["c_s"][key2] * self._temp_factor(eff_temp)
             return round(val, 2), "cooler_slot", self._counts["c_s"][key2]
 
         # 3
         if slot in self._tables["s"] and self._counts["s"][slot] >= 1:
-            val = self._tables["s"][slot] * self._temp_factor(outdoor_temp_c)
+            val = self._tables["s"][slot] * self._temp_factor(eff_temp)
             return round(val, 2), "global_slot", self._counts["s"][slot]
 
         # 4 engineered default
         val = self._default_prediction(
-            cooler_id, slot, outdoor_temp_c, games_intensity, near_games
+            cooler_id, slot, eff_temp, games_intensity, near_games
         )
         return val, "engineered_default", 0
 
@@ -179,6 +181,7 @@ class HistoricalAverageBaseline:
                 day_of_week=rec.get("day_of_week", "Monday"),
                 period_slot=rec["period_slot"],
                 outdoor_temp_c=float(rec.get("outdoor_temp_c", 25.0)),
+                apparent_temp_c=rec.get("apparent_temp_c"),
                 games_intensity=rec.get("games_intensity", "None"),
                 near_games=bool(rec.get("near_games", False)),
             )

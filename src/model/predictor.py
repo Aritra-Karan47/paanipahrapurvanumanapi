@@ -15,12 +15,24 @@ from .catboost_model import CatBoostQuantileModel
 from .features import build_features, build_single_feature_row
 
 try:
-    from ..weather.service import get_slot_hourly_temperature
+    from ..weather.service import (
+        calculate_apparent_temperature,
+        get_slot_hourly_apparent_temperature,
+        get_slot_hourly_temperature,
+    )
 except (ImportError, ValueError):
     try:
-        from weather.service import get_slot_hourly_temperature
+        from weather.service import (
+            calculate_apparent_temperature,
+            get_slot_hourly_apparent_temperature,
+            get_slot_hourly_temperature,
+        )
     except ImportError:
-        from cooler_demand.weather.service import get_slot_hourly_temperature
+        from cooler_demand.weather.service import (
+            calculate_apparent_temperature,
+            get_slot_hourly_apparent_temperature,
+            get_slot_hourly_temperature,
+        )
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +122,8 @@ class WaterDemandPredictor:
         intervals: List[Dict[str, Any]],
         outdoor_temp_c: float,
         weather: str = "Unknown",
+        humidity_pct: Optional[float] = None,
+        apparent_temp_c: Optional[float] = None,
         model_preference: str = "auto",
         use_cache: bool = True,
         hourly_forecast: Optional[Dict[str, Any]] = None,
@@ -118,10 +132,21 @@ class WaterDemandPredictor:
 
         Checks in-memory TTL/LRU cache for (cooler_id, day_of_week, temp_band, slot_tuple)
         to deliver instant response times (< 2 ms) on repeated calls.
-        Maps each period slot to its respective hourly forecasted temperature.
+        Maps each period slot to its respective hourly forecasted temperature & apparent temperature.
         """
+        # Resolve base apparent temperature (feels-like / heat index)
+        if apparent_temp_c is not None:
+            base_apparent = float(apparent_temp_c)
+        elif humidity_pct is not None:
+            base_apparent = calculate_apparent_temperature(outdoor_temp_c, float(humidity_pct))
+        elif str(weather).lower() == "humid":
+            base_apparent = calculate_apparent_temperature(outdoor_temp_c, 75.0)
+        else:
+            base_apparent = float(outdoor_temp_c)
+
         day_of_week = intervals[0].get("day_of_week", "Monday") if intervals else "Monday"
-        temp_band = compute_temp_band(outdoor_temp_c)
+        # Cache uses the effective temperature band so humid heatwaves and dry days don't collide
+        temp_band = compute_temp_band(base_apparent)
         slot_tuple = tuple(iv["period_slot"] for iv in intervals)
         cache_key = PredictionCache.build_key(cooler_id, day_of_week, temp_band, slot_tuple)
 
@@ -143,11 +168,24 @@ class WaterDemandPredictor:
                     base_temp_c=outdoor_temp_c,
                     hourly_forecast=hourly_forecast,
                 )
+
+            if "apparent_temp_c" in iv and iv["apparent_temp_c"] is not None:
+                slot_apparent = float(iv["apparent_temp_c"])
+            else:
+                slot_apparent = get_slot_hourly_apparent_temperature(
+                    period_slot=slot,
+                    base_temp_c=outdoor_temp_c,
+                    base_humidity_pct=humidity_pct if humidity_pct is not None else 50.0,
+                    hourly_forecast=hourly_forecast,
+                )
+
             rec = {
                 "cooler_id": cooler_id,
                 "day_of_week": iv.get("day_of_week", "Monday"),
                 "period_slot": slot,
                 "outdoor_temp_c": slot_temp,
+                "apparent_temp_c": slot_apparent,
+                "humidity_pct": humidity_pct if humidity_pct is not None else 50.0,
                 "weather": weather,
                 "games_intensity": iv.get("games_intensity", "None"),
                 "duration_minutes": iv.get("duration_minutes", 40),
@@ -185,6 +223,8 @@ class WaterDemandPredictor:
         slot_tuple: Tuple[str, ...],
         outdoor_temp_c: Optional[float] = None,
         weather: str = "Unknown",
+        humidity_pct: Optional[float] = None,
+        apparent_temp_c: Optional[float] = None,
         model_preference: str = "auto",
     ) -> List[Dict[str, Any]]:
         """Direct query by (cooler_id, day_of_week, temp_band, slot_tuple) hitting cache or generating baseline."""
@@ -203,6 +243,8 @@ class WaterDemandPredictor:
             intervals=intervals,
             outdoor_temp_c=outdoor_temp_c,
             weather=weather,
+            humidity_pct=humidity_pct,
+            apparent_temp_c=apparent_temp_c,
             model_preference=model_preference,
             use_cache=True,
         )

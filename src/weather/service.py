@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -76,6 +77,85 @@ DIURNAL_TEMP_OFFSETS: Dict[str, float] = {
     "P8": +1.0,     # 03:00 PM
 }
 
+# Diurnal relative humidity progression (% offset from base humidity):
+# Early morning (8:00 AM) has higher relative humidity; afternoon peak heat has lower relative humidity.
+DIURNAL_HUMIDITY_OFFSETS: Dict[str, float] = {
+    "P1": +12.0,    # 08:00 AM (higher morning humidity)
+    "P2": +8.0,     # 08:45 AM
+    "P3": +5.0,     # 09:30 AM
+    "P4": +2.0,     # 10:15 AM
+    "Recess": 0.0,  # 11:00 AM
+    "P5": -2.0,     # 11:30 AM
+    "P6": -6.0,     # 01:30 PM (peak dry heat)
+    "P7": -4.0,     # 02:00 PM
+    "P8": -2.0,     # 03:00 PM
+}
+
+
+def calculate_apparent_temperature(
+    temp_c: float,
+    humidity_pct: float,
+    wind_speed_ms: float = 1.5,
+) -> float:
+    """Calculate Apparent Temperature (Feels-Like temperature in °C) using Steadman's formula.
+
+    Formula (Australian Bureau of Meteorology / Steadman model used by Open-Meteo):
+      e = (humidity_pct / 100.0) * 6.105 * exp((17.27 * temp_c) / (237.7 + temp_c))
+      apparent_temp = temp_c + 0.33 * e - 0.70 * wind_speed_ms - 4.0
+
+    At 34°C with 75% relative humidity and light indoor breeze (1.5 m/s), feels like ~42.1°C (~42°C).
+    At 25°C with 50% relative humidity, feels like ~25.1°C.
+    """
+    rh = max(0.0, min(100.0, float(humidity_pct)))
+    t = float(temp_c)
+    # Vapor pressure e in hPa
+    e = (rh / 100.0) * 6.105 * math.exp((17.27 * t) / (237.7 + t))
+    at = t + 0.33 * e - 0.70 * float(wind_speed_ms) - 4.0
+    return round(at, 1)
+
+
+def calculate_heat_index(temp_c: float, humidity_pct: float) -> float:
+    """Calculate Heat Index in °C using the standard NOAA / Rothfusz polynomial regression equation.
+
+    Provides standard US NWS / NOAA Heat Index metric.
+    """
+    rh = max(0.0, min(100.0, float(humidity_pct)))
+    t_c = float(temp_c)
+    t_f = t_c * 1.8 + 32.0
+
+    if t_f < 80.0:
+        # Simple Steadman formula for mild temperatures (< 80°F / ~26.7°C)
+        hi_f = 0.5 * (t_f + 61.0 + ((t_f - 68.0) * 1.2) + (rh * 0.094))
+    else:
+        # Rothfusz polynomial regression
+        hi_f = (
+            -42.379
+            + 2.04901523 * t_f
+            + 10.14333127 * rh
+            - 0.22475541 * t_f * rh
+            - 0.00683783 * (t_f ** 2)
+            - 0.05481717 * (rh ** 2)
+            + 0.00122874 * (t_f ** 2) * rh
+            + 0.00085282 * t_f * (rh ** 2)
+            - 0.00000199 * (t_f ** 2) * (rh ** 2)
+        )
+        if rh < 13.0 and 80.0 <= t_f <= 112.0:
+            adj = ((13.0 - rh) / 4.0) * math.sqrt((17.0 - abs(t_f - 95.0)) / 17.0)
+            hi_f -= adj
+        elif rh > 85.0 and 80.0 <= t_f <= 87.0:
+            adj = ((rh - 85.0) / 10.0) * ((87.0 - t_f) / 5.0)
+            hi_f += adj
+
+    hi_c = (hi_f - 32.0) / 1.8
+    return round(hi_c, 1)
+
+
+def diurnal_humidity_for_slot(base_humidity_pct: float, period_slot: str) -> float:
+    """Derive realistic intra-day relative humidity for a school period based on diurnal curve."""
+    slot = str(period_slot).strip()
+    offset = DIURNAL_HUMIDITY_OFFSETS.get(slot, 0.0)
+    return round(max(5.0, min(100.0, float(base_humidity_pct) + offset)), 1)
+
 
 def diurnal_temperature_for_slot(base_temp_c: float, period_slot: str) -> float:
     """Derive realistic intra-day temperature for a school period based on typical diurnal progression."""
@@ -118,6 +198,89 @@ def get_slot_hourly_temperature(
     return diurnal_temperature_for_slot(base_temp_c, slot)
 
 
+def get_slot_hourly_humidity(
+    period_slot: str,
+    base_humidity_pct: float = 50.0,
+    hourly_forecast: Optional[Dict[str, Any]] = None,
+    target_date: Optional[str] = None,
+) -> float:
+    """Map a period slot's start time to its respective hourly relative humidity (%)."""
+    slot = str(period_slot).strip()
+    hour = PERIOD_START_HOURS.get(slot)
+    if hour is None:
+        return round(float(base_humidity_pct), 1)
+
+    if hourly_forecast and isinstance(hourly_forecast, dict):
+        times = hourly_forecast.get("time", [])
+        rhs = hourly_forecast.get("relative_humidity_2m", [])
+        if times and rhs and len(times) == len(rhs):
+            hour_str = f"T{hour:02d}:00"
+            for t_str, val in zip(times, rhs):
+                if target_date and not str(t_str).startswith(target_date):
+                    continue
+                if hour_str in str(t_str):
+                    try:
+                        return round(float(val), 1)
+                    except (TypeError, ValueError):
+                        pass
+
+    return diurnal_humidity_for_slot(base_humidity_pct, slot)
+
+
+def get_slot_hourly_apparent_temperature(
+    period_slot: str,
+    base_temp_c: float,
+    base_humidity_pct: float = 50.0,
+    hourly_forecast: Optional[Dict[str, Any]] = None,
+    target_date: Optional[str] = None,
+    wind_speed_ms: float = 1.5,
+) -> float:
+    """Map a period slot's start time to its respective hourly forecasted apparent temperature (feels-like °C).
+
+    If Open-Meteo hourly forecast contains 'apparent_temperature', uses the hourly value directly.
+    Otherwise, derives it from hourly temperature & relative humidity or diurnal progression.
+    """
+    slot = str(period_slot).strip()
+    hour = PERIOD_START_HOURS.get(slot)
+    if hour is None:
+        return calculate_apparent_temperature(base_temp_c, base_humidity_pct, wind_speed_ms=wind_speed_ms)
+
+    if hourly_forecast and isinstance(hourly_forecast, dict):
+        times = hourly_forecast.get("time", [])
+        app_temps = hourly_forecast.get("apparent_temperature", [])
+        if times and app_temps and len(times) == len(app_temps):
+            hour_str = f"T{hour:02d}:00"
+            for t_str, val in zip(times, app_temps):
+                if target_date and not str(t_str).startswith(target_date):
+                    continue
+                if hour_str in str(t_str):
+                    try:
+                        return round(float(val), 1)
+                    except (TypeError, ValueError):
+                        pass
+
+        # If apparent_temperature not in hourly, try temperature_2m and relative_humidity_2m
+        temps = hourly_forecast.get("temperature_2m", [])
+        rhs = hourly_forecast.get("relative_humidity_2m", [])
+        if times and temps and len(times) == len(temps):
+            hour_str = f"T{hour:02d}:00"
+            for idx, (t_str, val) in enumerate(zip(times, temps)):
+                if target_date and not str(t_str).startswith(target_date):
+                    continue
+                if hour_str in str(t_str):
+                    try:
+                        t_val = float(val)
+                        rh_val = float(rhs[idx]) if rhs and len(rhs) > idx else base_humidity_pct
+                        return calculate_apparent_temperature(t_val, rh_val, wind_speed_ms=wind_speed_ms)
+                    except (TypeError, ValueError):
+                        pass
+
+    # Diurnal progression fallback
+    slot_temp = diurnal_temperature_for_slot(base_temp_c, slot)
+    slot_rh = diurnal_humidity_for_slot(base_humidity_pct, slot)
+    return calculate_apparent_temperature(slot_temp, slot_rh, wind_speed_ms=wind_speed_ms)
+
+
 def map_period_hourly_temperatures(
     base_temp_c: float,
     hourly_forecast: Optional[Dict[str, Any]] = None,
@@ -128,6 +291,23 @@ def map_period_hourly_temperatures(
     target_slots = slots or ["P1", "P2", "P3", "P4", "Recess", "P5", "P6", "P7", "P8"]
     return {
         s: get_slot_hourly_temperature(s, base_temp_c, hourly_forecast, target_date)
+        for s in target_slots
+    }
+
+
+def map_period_hourly_apparent_temperatures(
+    base_temp_c: float,
+    base_humidity_pct: float = 50.0,
+    hourly_forecast: Optional[Dict[str, Any]] = None,
+    slots: Optional[List[str]] = None,
+    target_date: Optional[str] = None,
+) -> Dict[str, float]:
+    """Map all given period slots to their hourly forecasted apparent temperatures."""
+    target_slots = slots or ["P1", "P2", "P3", "P4", "Recess", "P5", "P6", "P7", "P8"]
+    return {
+        s: get_slot_hourly_apparent_temperature(
+            s, base_temp_c, base_humidity_pct, hourly_forecast, target_date
+        )
         for s in target_slots
     }
 
@@ -300,8 +480,8 @@ def fetch_live_weather(
                 params={
                     "latitude": lat,
                     "longitude": lon,
-                    "current": "temperature_2m,relative_humidity_2m,weather_code",
-                    "hourly": "temperature_2m,relative_humidity_2m,weather_code",
+                    "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code",
+                    "hourly": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code",
                     "timezone": "auto",
                 },
             )
@@ -313,11 +493,19 @@ def fetch_live_weather(
                 code = int(current.get("weather_code", 0))
                 condition = _wmo_code_to_condition(code, humidity=humidity)
 
+                app_temp_val = current.get("apparent_temperature")
+                if app_temp_val is not None:
+                    apparent_temp = float(app_temp_val)
+                else:
+                    apparent_temp = calculate_apparent_temperature(temp, humidity)
+                heat_index = calculate_heat_index(temp, humidity)
+
                 hourly = data.get("hourly", {})
                 hourly_forecast = {
                     "time": hourly.get("time", []),
                     "temperature_2m": hourly.get("temperature_2m", []),
                     "relative_humidity_2m": hourly.get("relative_humidity_2m", []),
+                    "apparent_temperature": hourly.get("apparent_temperature", []),
                     "weather_code": hourly.get("weather_code", []),
                 }
 
@@ -330,6 +518,8 @@ def fetch_live_weather(
                 weather_payload = {
                     "success": True,
                     "outdoor_temp_c": round(temp, 1),
+                    "apparent_temp_c": round(apparent_temp, 1),
+                    "heat_index_c": round(heat_index, 1),
                     "weather": condition,
                     "humidity_pct": round(humidity, 1),
                     "weather_code": code,
@@ -351,11 +541,18 @@ def fetch_live_weather(
         logger.warning("Failed to fetch live weather from Open-Meteo: %s", exc)
 
     # 4. Fallback if offline or unreachable
+    fallback_temp = 28.0
+    fallback_rh = 50.0
+    fallback_app = calculate_apparent_temperature(fallback_temp, fallback_rh)
+    fallback_hi = calculate_heat_index(fallback_temp, fallback_rh)
+
     fallback_payload = {
         "success": False,
-        "outdoor_temp_c": 28.0,
+        "outdoor_temp_c": fallback_temp,
+        "apparent_temp_c": fallback_app,
+        "heat_index_c": fallback_hi,
         "weather": "Clear",
-        "humidity_pct": 50.0,
+        "humidity_pct": fallback_rh,
         "weather_code": 0,
         "hourly_forecast": None,
         "location_name": resolved_name,

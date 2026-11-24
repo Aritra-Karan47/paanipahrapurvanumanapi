@@ -11,6 +11,14 @@ import pandas as pd
 from .cache import compute_temp_band
 from .preprocessing import compute_active_students_in_zone
 
+try:
+    from ..weather.service import calculate_apparent_temperature, calculate_heat_index
+except (ImportError, ValueError):
+    try:
+        from weather.service import calculate_apparent_temperature, calculate_heat_index
+    except ImportError:
+        from cooler_demand.weather.service import calculate_apparent_temperature, calculate_heat_index
+
 
 DAY_MAP = {
     "Monday": 0,
@@ -51,6 +59,8 @@ def build_single_feature_row(
     day_of_week: str,
     period_slot: str,
     outdoor_temp_c: float,
+    apparent_temp_c: Optional[float] = None,
+    humidity_pct: Optional[float] = None,
     weather: str = "Unknown",
     games_intensity: str = "None",
     duration_minutes: int = 40,
@@ -68,6 +78,16 @@ def build_single_feature_row(
     intensity = GAMES_INTENSITY_MAP.get(games_intensity, 0)
     weather_code = WEATHER_MAP.get(weather, -1)
 
+    # Resolve Apparent Temperature (Feels-Like temperature / Heat Index)
+    if apparent_temp_c is not None:
+        eff_apparent = float(apparent_temp_c)
+    elif humidity_pct is not None:
+        eff_apparent = calculate_apparent_temperature(outdoor_temp_c, float(humidity_pct))
+    elif str(weather).lower() == "humid":
+        eff_apparent = calculate_apparent_temperature(outdoor_temp_c, 75.0)
+    else:
+        eff_apparent = float(outdoor_temp_c)
+
     # Temperature bands (same spirit as control table)
     temp_band = compute_temp_band(outdoor_temp_c)
 
@@ -81,6 +101,7 @@ def build_single_feature_row(
         "games_intensity": intensity,
         "duration_minutes": duration_minutes,
         "outdoor_temp_c": outdoor_temp_c,
+        "apparent_temp_c": round(eff_apparent, 1),
         "temp_band": temp_band,
         "weather_code": weather_code,
         "capacity_liters": capacity_liters,
@@ -143,11 +164,20 @@ def build_features(
                 cooler_meta=cooler_meta,
             )
 
+        apparent_temp = rec.get("apparent_temp_c")
+        if apparent_temp is None:
+            apparent_temp = rec.get("apparent_temperature_c")
+        humidity = rec.get("humidity_pct")
+        if humidity is None:
+            humidity = rec.get("humidity")
+
         row = build_single_feature_row(
             cooler_id=cid,
             day_of_week=day,
             period_slot=slot,
             outdoor_temp_c=float(rec.get("outdoor_temp_c", 25.0)),
+            apparent_temp_c=float(apparent_temp) if apparent_temp is not None else None,
+            humidity_pct=float(humidity) if humidity is not None else None,
             weather=rec.get("weather", "Unknown"),
             games_intensity=rec.get("games_intensity", "None"),
             duration_minutes=int(rec.get("duration_minutes", 40)),
@@ -177,6 +207,7 @@ def feature_columns(include_target: bool = False) -> List[str]:
         "games_intensity",
         "duration_minutes",
         "outdoor_temp_c",
+        "apparent_temp_c",
         "temp_band",
         "weather_code",
         "capacity_liters",
