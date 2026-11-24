@@ -139,6 +139,8 @@ def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str
     weather = payload.get("weather", {})
     outdoor = float(weather.get("outdoor_temp_c", 25.0))
     weather_name = weather.get("weather", "Unknown")
+    humidity = weather.get("humidity_pct")
+    apparent_temp = weather.get("apparent_temp_c")
     if hasattr(weather_name, "value"):
         weather_name = weather_name.value
     pref = payload.get("model_preference", "auto")
@@ -164,6 +166,8 @@ def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str
         }
         if "outdoor_temp_c" in iv:
             entry["outdoor_temp_c"] = iv["outdoor_temp_c"]
+        if "apparent_temp_c" in iv:
+            entry["apparent_temp_c"] = iv["apparent_temp_c"]
         if "active_students_in_zone" in iv:
             entry["active_students_in_zone"] = iv["active_students_in_zone"]
         iv_list.append(entry)
@@ -175,6 +179,8 @@ def service_predict(payload: Dict[str, Any], use_cache: bool = True) -> Dict[str
         intervals=iv_list,
         outdoor_temp_c=outdoor,
         weather=str(weather_name),
+        humidity_pct=float(humidity) if humidity is not None else None,
+        apparent_temp_c=float(apparent_temp) if apparent_temp is not None else None,
         model_preference=pref,
         use_cache=use_cache,
         hourly_forecast=hourly_forecast,
@@ -304,6 +310,9 @@ def service_validate_data(payload: Dict[str, Any]) -> Dict[str, Any]:
             errors.append("weather.outdoor_temp_c is required")
         elif not (-20 <= float(t) <= 55):
             errors.append("outdoor_temp_c out of plausible range [-20, 55]")
+        h = weather.get("humidity_pct")
+        if h is not None and not (0 <= float(h) <= 100):
+            errors.append("humidity_pct out of plausible range [0, 100]")
 
     return {
         "valid": len(errors) == 0,
@@ -334,6 +343,8 @@ def ui_detect_weather(city: str, force_refresh: bool = False):
     res = fetch_live_weather(city=city, force_refresh=force_refresh)
     temp = res.get("outdoor_temp_c", 28.0)
     cond = res.get("weather", "Clear")
+    humidity = res.get("humidity_pct", 50.0)
+    app_temp = res.get("apparent_temp_c", temp)
     st_info = res.get("station_info", "")
     loc = res.get("location_name", city or "Location")
 
@@ -343,14 +354,14 @@ def ui_detect_weather(city: str, force_refresh: bool = False):
         age_str = "Freshly fetched from Open-Meteo (8-hour cache initialized)"
 
     status_md = (
-        f"**Live Weather Detected**: **{temp} °C**, **{cond}** ({res.get('humidity_pct', 50)}% humidity)\n\n"
+        f"**Live Weather Detected**: **{temp} °C** (Feels like **{app_temp} °C**), **{cond}** ({humidity}% humidity)\n\n"
         f"• **Location**: {loc}\n"
         f"• **Source**: {res.get('source', 'Open-Meteo')}\n"
         f"• **Base Station**: {st_info}\n"
         f"• **Cache**: {age_str}\n\n"
-        f"_Slider below is auto-updated, but you can still drag it manually to simulate what-if scenarios._"
+        f"_Sliders below are auto-updated, but you can still drag them manually to simulate what-if scenarios._"
     )
-    return temp, cond, status_md
+    return temp, cond, humidity, status_md
 
 
 def ui_predict(
@@ -361,6 +372,7 @@ def ui_predict(
     slots_csv: str,
     outdoor_temp: float,
     weather: str,
+    humidity: float,
     current_level: float,
 ):
     slots = [s.strip() for s in slots_csv.split(",") if s.strip()]
@@ -381,7 +393,11 @@ def ui_predict(
             "current_level_liters": current_level,
         },
         "intervals": intervals,
-        "weather": {"outdoor_temp_c": outdoor_temp, "weather": weather},
+        "weather": {
+            "outdoor_temp_c": outdoor_temp,
+            "weather": weather,
+            "humidity_pct": humidity,
+        },
         "day_of_week": day,
         "current_level_liters": current_level,
         "model_preference": "auto",
@@ -468,6 +484,7 @@ def create_demo() -> gr.Blocks:
 
                 with gr.Row():
                     outdoor = gr.Slider(-5, 45, value=28, step=0.5, label="Outdoor temp (°C)")
+                    humidity = gr.Slider(0, 100, value=50, step=1, label="Relative Humidity (%)")
                     weather = gr.Dropdown(
                         choices=["Clear", "Cloudy", "Rainy", "Humid", "Unknown"],
                         value="Clear",
@@ -477,19 +494,19 @@ def create_demo() -> gr.Blocks:
                 detect_btn.click(
                     fn=lambda c: ui_detect_weather(c, force_refresh=False),
                     inputs=[weather_city],
-                    outputs=[outdoor, weather, weather_status],
+                    outputs=[outdoor, weather, humidity, weather_status],
                 )
                 force_btn.click(
                     fn=lambda c: ui_detect_weather(c, force_refresh=True),
                     inputs=[weather_city],
-                    outputs=[outdoor, weather, weather_status],
+                    outputs=[outdoor, weather, humidity, weather_status],
                 )
                 btn = gr.Button("Predict", variant="primary")
                 md_out = gr.Markdown()
                 json_out = gr.Code(language="json", label="Raw JSON response")
                 btn.click(
                     ui_predict,
-                    inputs=[cooler_id, capacity, near_games, day, slots, outdoor, weather, current_level],
+                    inputs=[cooler_id, capacity, near_games, day, slots, outdoor, weather, humidity, current_level],
                     outputs=[md_out, json_out],
                 )
 

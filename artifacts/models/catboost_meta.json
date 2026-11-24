@@ -9,6 +9,7 @@
     "games_intensity",
     "duration_minutes",
     "outdoor_temp_c",
+    "apparent_temp_c",
     "temp_band",
     "weather_code",
     "capacity_liters",
@@ -22,10 +23,10 @@
     "temp_x_recess"
   ],
   "metrics": {
-    "holdout_mae": 0.9187,
-    "holdout_mape_pct": 16.89,
+    "holdout_mae": 0.9134,
+    "holdout_mape_pct": 16.74,
     "holdout_coverage_p90_pct": 90.97,
-    "p90_calibration_offset": 0.1969
+    "p90_calibration_offset": 0.2022
   },
   "model_version": "water-demand-v0.1.0-catboost",
   "trained_on": "Cooler_Water_Consumption_Record.csv (5 weeks, 2160 rows)"

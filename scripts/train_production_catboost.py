@@ -29,7 +29,11 @@ from model.preprocessing import (
     load_consumption_record,
     load_cooler_config,
 )
-from weather.service import diurnal_temperature_for_slot
+from weather.service import (
+    calculate_apparent_temperature,
+    diurnal_humidity_for_slot,
+    diurnal_temperature_for_slot,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("train-production-catboost")
@@ -67,6 +71,8 @@ def main() -> None:
 
         meta = cooler_meta.get(cid, {})
         slot_temp = diurnal_temperature_for_slot(base_ambient_temp, slot)
+        slot_rh = diurnal_humidity_for_slot(50.0, slot)
+        slot_apparent = calculate_apparent_temperature(slot_temp, slot_rh)
         active_students = compute_active_students_in_zone(
             cooler_id=cid,
             day_of_week=day,
@@ -80,6 +86,8 @@ def main() -> None:
             "day_of_week": day,
             "period_slot": slot,
             "outdoor_temp_c": slot_temp,
+            "apparent_temp_c": slot_apparent,
+            "humidity_pct": slot_rh,
             "weather": "Clear",
             "games_intensity": "Moderate" if slot == "Games" else "None",
             "duration_minutes": 20 if slot == "Recess" else 40,
