@@ -53,11 +53,11 @@ Computer Science (2025--27)}
 \maketitle
 
 \begin{abstract}
-Schools in warm climates face two common problems with drinking water coolers: storage tanks run dry during short recess periods when hundreds of students drink at once, and cooling compressors run continuously at fixed low temperatures ($10^\circ\text{C}$--$12^\circ\text{C}$), wasting substantial electricity. This paper presents \textit{PaniPahara}, an Internet of Things (IoT) and machine learning system that accurately forecasts water consumption and automates energy-efficient cooling across school campuses. The prediction engine combines live weather feeds (deriving the ``feels-like'' Apparent Temperature from humidity and heat) with the school timetable to track student movement between classrooms, sports grounds, and recess breaks. Using a dual-quantile CatBoost model evaluated across 2,160 real period records from 8 campus coolers over 5 school weeks, the system forecasts both the expected demand ($Q_{0.50}$, with a Mean Absolute Error of $0.913$\,liters) and a safe upper limit ($Q_{0.90}$, achieving $90.97\%$ shortage prevention coverage). Concurrently, a rule-based temperature controller following the Indian Standard IS~1475:2024 dynamically adjusts target water temperatures across seven ambient weather bands, reducing cooler electricity consumption by $34.2\%$. PaniPahara is deployed as a cloud microservice with an asynchronous Python library, delivering predictions in under $1.5$\,milliseconds.
+Schools in warm climates face two common operational challenges with drinking water coolers: storage tanks run dry during short recess periods when hundreds of students drink at once, and cooling compressors run continuously at fixed low temperatures ($10^\circ\text{C}$--$12^\circ\text{C}$), wasting substantial electricity. This paper presents \textit{PaniPahara}, a simulation-driven architectural framework and pre-deployment benchmark that forecasts water consumption and automates energy-efficient cooling across school campuses prior to physical hardware retrofitting. The prediction engine combines live weather feeds (deriving the ``feels-like'' Apparent Temperature from humidity and heat) with the school timetable to track student footfall between classrooms, sports grounds, and recess breaks. To establish technical feasibility without disrupting active school operations or requiring premature hardware outlays, the system is evaluated on a physics-informed synthetic benchmark of 2,160 period records calibrated against the 8-cooler infrastructure and official timetable of PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur over five school weeks. Using a dual-quantile CatBoost model, the system forecasts both the expected demand ($Q_{0.50}$, with a Mean Absolute Error of $0.913$\,liters) and a safe upper limit ($Q_{0.90}$, achieving $90.97\%$ shortage prevention coverage). Concurrently, a rule-based temperature controller following the Indian Standard IS~1475:2024 dynamically adjusts target water temperatures across seven ambient weather bands, reducing simulated cooler electricity consumption by $34.2\%$. PaniPahara is implemented as a cloud microservice with an asynchronous Python library, delivering predictions in under $1.5$\,milliseconds and providing an open-source blueprint for future IoT deployment.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Water coolers, demand forecasting, CatBoost, quantile regression, IS~1475:2024, smart campus, energy efficiency, apparent temperature, IoT.
+Water coolers, demand forecasting, CatBoost, quantile regression, IS~1475:2024, smart campus, energy efficiency, apparent temperature, synthetic benchmark.
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -70,14 +70,17 @@ Providing clean drinking water at comfortable temperatures is essential for stud
 
 Existing water forecasting studies typically examine entire cities or municipal water utilities using hourly or daily data~\cite{donkor2014urban, herrera2010predicting}. These models do not work for school campuses because they do not account for school bell schedules, class timetables, and sudden 20-minute recess rushes.
 
-To address both problems, we developed \textbf{PaniPahara}, a complete smart water management system tested on the campus of PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur. The system features:
+At the same time, physically retrofitting IoT sensors and microcontrollers onto active refrigeration equipment in an operational school is a major logistical undertaking. It requires formal administrative permissions from school authorities, capital sensor procurement, electrical safety verification, and scheduling during non-instructional hours to avoid disrupting students. Therefore, establishing technical and economic feasibility through rigorous simulation prior to on-site installation is essential.
+
+To address both problems, we present \textbf{PaniPahara}, a complete architectural framework, software microservice, and pre-deployment simulation benchmark modeled after the campus topology and official academic timetable of PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur. The system features:
 
 \begin{itemize}
     \item \textbf{Dual-Quantile CatBoost Forecasting:} Predicts both the expected median consumption ($Q_{0.50}$) for inventory tracking and a conservative upper reserve ($Q_{0.90}$) to warn staff before a tank runs dry.
-    \item \textbf{Feels-Like Weather Integration:} Uses real-time relative humidity and dry-bulb temperature from Open-Meteo to calculate the Steadman Apparent Temperature, accurately capturing thirst increases during humid weather.
+    \item \textbf{Feels-Like Weather Integration:} Uses relative humidity and dry-bulb temperature from Open-Meteo to calculate the Steadman Apparent Temperature, accurately capturing thirst increases during humid weather.
     \item \textbf{Timetable-Driven Footfall Tracking:} Converts school timetable schedules into active student density numbers across campus academic wings and sports areas.
-    \item \textbf{Energy-Saving Chiller Control (IS~1475:2024):} Uses seven standardized ambient temperature bands from Indian Standard IS~1475:2024 to adjust cooling setpoints, cutting electricity consumption by $34.2\%$.
-    \item \textbf{Fast and Reliable Architecture:} Built with Neon Serverless Postgres, an 8-hour persistent weather cache, and an asynchronous Python SDK with sub-$2$\,ms response time.
+    \item \textbf{Energy-Saving Chiller Control (IS~1475:2024):} Uses seven standardized ambient temperature bands from Indian Standard IS~1475:2024 to adjust cooling setpoints, cutting simulated electricity consumption by $34.2\%$.
+    \item \textbf{Physics-Informed Synthetic Benchmark:} Evaluated on a 2,160-period calibrated synthetic dataset reflecting real class strengths, sports schedules, and historical weather, providing a reliable pre-deployment testbed.
+    \item \textbf{Fast and Reliable Software Engine:} Implemented with Neon Serverless Postgres, an 8-hour persistent weather cache, and an asynchronous Python SDK with sub-$2$\,ms response time.
 \end{itemize}
 
 \section{System Architecture}
@@ -94,8 +97,8 @@ Fig.~\ref{fig:arch} shows the overall architecture of PaniPahara. It consists of
 ]
 
 \node[block] (l1) {
-    \textbf{1. Edge Dispensers \& Clients (School Campus)}\\
-    \textbullet~8 Water Coolers (Location01A to 04B) with level \& temp sensors\\
+    \textbf{1. Edge Dispensers \& Clients (Proposed Campus Blueprint)}\\
+    \textbullet~8 Water Coolers (Location01A to 04B) modeled with sensors\\
     \textbullet~Async Python SDK (\texttt{AsyncWaterDemandClient})\\
     \textbullet~Web Dashboard for School Administrators
 };
@@ -127,16 +130,16 @@ Fig.~\ref{fig:arch} shows the overall architecture of PaniPahara. It consists of
 
 \end{tikzpicture}
 }
-\caption{System architecture of the PaniPahara platform, showing the flow from campus dispensers and sensors to the cloud prediction and control engine.}
+\caption{System architecture of the PaniPahara platform, showing the flow from the campus dispenser blueprint to the cloud prediction and control engine.}
 \label{fig:arch}
 \end{figure}
 
-\subsection{Campus Cooler Network}
-The system monitors eight drinking water coolers located across academic wings and sports facilities, as summarized in Table~\ref{tab:coolers}. Academic block coolers range from $150$\,L to $200$\,L, while the two coolers adjacent to the sports complex have larger $250$\,L tanks to handle post-exercise rushes.
+\subsection{Campus Cooler Topology}
+The architectural model is designed around the eight drinking water coolers located across academic wings and sports facilities at PM SHRI KV No 1 IIT Kharagpur, as summarized in Table~\ref{tab:coolers}. Academic block coolers range from $150$\,L to $200$\,L, while the two coolers adjacent to the sports complex have larger $250$\,L tanks to handle post-exercise rushes. In this pre-deployment study, this topology forms the digital twin environment used to model student flows and water depletion.
 
 \begin{table}[!t]
 \centering
-\caption{Campus Water Cooler Infrastructure at PM SHRI KV No 1 IIT Kharagpur}
+\caption{Campus Water Cooler Infrastructure Model at PM SHRI KV No 1 IIT Kharagpur}
 \label{tab:coolers}
 \resizebox{\columnwidth}{!}{
 \begin{tabular}{llccc}
@@ -159,7 +162,7 @@ The system monitors eight drinking water coolers located across academic wings a
 \subsection{Database and Offline Fallback}
 Telemetry records and configurations are stored in Neon Serverless Postgres~\cite{neondb2024}. The database stores:
 \begin{itemize}
-    \item \texttt{coolers}: metadata, tank capacities, and current levels.
+    \item \texttt{coolers}: metadata, tank capacities, and baseline levels.
     \item \texttt{consumption\_records}: period-by-period liters consumed.
     \item \texttt{school\_timetable}: class schedules across all 48 sections.
     \item \texttt{temperature\_control\_rules}: standard cooling bounds.
@@ -221,7 +224,7 @@ A safety check ensures that the upper limit never falls below the median:
 \end{equation}
 where $\delta_{\text{cal}}$ is a small calibration offset ensuring at least $90\%$ coverage.
 
-If current tank water level $L_{\text{current}} < \hat{y}_{0.90}$, the system flags an immediate \textbf{Shortage Alert}, prompting automated refilling before the bell rings.
+If current tank water level $L_{\text{current}} < \hat{y}_{0.90}$, the system flags an immediate \textbf{Shortage Alert}, prompting refilling before the bell rings.
 
 \subsection{Energy-Saving Temperature Control (IS~1475:2024)}
 Cooling water down to $10^\circ\text{C}$ requires substantial compressor work. We implement an adaptive temperature rule engine based on Indian Standard IS~1475:2024~\cite{bis2024is1475}, as outlined in Table~\ref{tab:is1475}.
@@ -255,11 +258,18 @@ where $\rho = 1.0\,$kg/L, $C_p = 4.184\,$kJ/(kg$\cdot$K), and $\text{COP}$ is th
 
 \section{Experimental Results}
 
-\subsection{Dataset and Evaluation Setup}
-We evaluated PaniPahara on a dataset of $2,160$ verified period records collected across 8 coolers at PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur over five weeks:
+\subsection{Calibrated Synthetic Dataset \& Simulation Setup}
+In school environments, physically retrofitting IoT flow meters and microcontrollers onto operational refrigeration systems requires institutional permissions, administrative clearances, and dedicated sensor procurement. To rigorously validate the forecasting and control algorithms prior to physical deployment, we developed a calibrated, physics-informed synthetic benchmark representing five school weeks ($2,160$ period records):
 \begin{equation*}
 8 \text{ coolers} \times 9 \text{ periods/day} \times 6 \text{ days/week} \times 5 \text{ weeks} = 2,160 \text{ records}.
 \end{equation*}
+
+The benchmark model integrates three verified inputs:
+\begin{enumerate}
+    \item \textbf{Academic Timetable Footfall:} The complete timetable for 48 class sections (${\approx}1,920$ students) at PM SHRI KV No 1 IIT Kharagpur, modeling student movements between classrooms, laboratory wings, and athletic grounds across 9 periods daily.
+    \item \textbf{Historical Open-Meteo Weather:} Real hourly dry-bulb temperature, relative humidity, and wind speed readings for Kharagpur over five weeks during the pre-monsoon season.
+    \item \textbf{Physiological Hydration Modeling:} Water consumption was modeled following established pediatric and adolescent hydration guidelines ($0.05$\,L to $0.15$\,L per student per break), dynamically scaled by the Steadman Apparent Temperature. Zero-mean Gaussian noise ($\sigma = 0.5\,$L) was added to emulate natural behavioral variations.
+\end{enumerate}
 
 To ensure honest evaluation without data leakage, we used forward-chaining weekly cross-validation:
 \begin{itemize}
@@ -273,7 +283,7 @@ Table~\ref{tab:comparison} compares PaniPahara with standard baseline approaches
 
 \begin{table}[!t]
 \centering
-\caption{Model Performance Comparison on School Dataset}
+\caption{Model Performance Comparison on Calibrated Benchmark}
 \label{tab:comparison}
 \resizebox{\columnwidth}{!}{
 \begin{tabular}{lcccc}
@@ -320,34 +330,36 @@ Heat Index ($HI$) & $0.938$\,L & $17.15\%$ & $1.185$\,L \\
 }
 \end{table}
 
-\subsection{Cooler Electricity Savings}
-We compared daily chiller power consumption across the 8 coolers between static cooling ($12^\circ\text{C}$ all day) and the proposed IS~1475:2024 adaptive controller:
+\subsection{Cooler Electricity Savings (Thermodynamic Simulation)}
+We evaluated daily chiller power consumption across the 8 coolers using numerical thermodynamic modeling comparing static chilling ($12^\circ\text{C}$ all day) against the proposed IS~1475:2024 adaptive controller:
 \begin{itemize}
     \item \textbf{Static Chilling ($12^\circ\text{C}$):} $28.4$\,kWh per day.
     \item \textbf{PaniPahara Adaptive Control:} $18.7$\,kWh per day.
     \item \textbf{Energy Saved:} \textbf{$34.2\%$} reduction ($9.7$\,kWh saved daily).
 \end{itemize}
 
-Over a 220-day school year, this saves over $2,130$\,kWh of electricity across eight coolers, lowering utility expenses while extending compressor operating lifespan.
+Over a 220-day school year, this represents a simulated saving of over $2,130$\,kWh of electricity across eight coolers, lowering utility expenses while reducing compressor thermal strain.
 
 \subsection{Microservice Speed and High Concurrency}
-System response time was tested using 1,000 requests sent via the Python library (\texttt{AsyncWaterDemandClient}):
+System response time was tested on the implemented FastAPI microservice using 1,000 requests sent via the Python library (\texttt{AsyncWaterDemandClient}):
 \begin{itemize}
     \item \textbf{Cached Inference:} $1.38$\,ms median response time.
     \item \textbf{Cold Inference:} $8.82$\,ms median response time.
     \item \textbf{Concurrent 8-Cooler Query:} Querying all eight coolers simultaneously took \textbf{$242$\,ms} using asynchronous parallel requests, compared to $2,140$\,ms for sequential queries ($8.8\times$ faster).
 \end{itemize}
 
-\section{Practical Deployment \& Discussion}
-From our deployment experience, three practical engineering choices proved vital:
+\section{Proposed Implementation Plan \& Deployment Roadmap}
+Deploying smart infrastructure in operational school environments involves practical administrative and engineering factors. This section outlines the proposed implementation plan designed for future on-campus execution:
+
 \begin{enumerate}
-    \item \textit{Separate Prediction from Physical Control:} Machine learning models should predict demand, but compressor on/off switches should always follow deterministic safety rules (Table~\ref{tab:is1475}). This prevents short-cycling and equipment damage.
-    \item \textit{Low-Cost Edge Devices:} By hosting the CatBoost model in a lightweight cloud microservice, edge hardware on each cooler only requires a simple microcontroller (ESP32) and flow sensor ($<\$25$ per unit).
-    \item \textit{Zero-Downtime Offline Backup:} If internet connectivity fails, the cooler controller instantly uses historical average tables stored on local flash memory, ensuring reliable school operation without interruption.
+    \item \textit{Administrative Clearance and Safety Protocols:} Physical modifications to school appliances require formal permission from school administration. Before physical installation, an engineering clearance report addressing food-grade contact safety, low-voltage isolation (12V DC for sensors), and tamper-proof enclosures must be approved by the school authorities to ensure zero interference with daily academics.
+    \item \textit{Non-Invasive Sensor Retrofitting:} Rather than cutting into pressurized refrigeration plumbing, the hardware blueprint uses non-invasive clip-on flow meters (such as YF-S201 or ultrasonic flow meters) attached directly to external dispenser taps, and non-contact ultrasonic depth sensors (JSN-SR04T) mounted on tank inspection ports. Low-cost ESP32 microcontrollers ($< \$25$ per cooler) handle telemetry over campus Wi-Fi.
+    \item \textit{Phased Pilot Rollout:} To minimize disruption, installation should follow a two-stage roadmap: an initial single-unit pilot on the highest-demand cooler (\texttt{Location04A} at the Sports Complex) to validate real-world flow calibrations, followed by campus-wide rollout across the remaining seven coolers.
+    \item \textit{Decoupled Control and Offline Fallback:} To protect compressor hardware, physical switching is decoupled from the machine learning engine: the microcontroller follows deterministic IS~1475:2024 thermostat bands. If Wi-Fi connectivity is interrupted, the edge device reverts to local flash lookup tables, guaranteeing uninterrupted chilled water supply.
 \end{enumerate}
 
 \section{Conclusion}
-This paper presented \textit{PaniPahara}, a practical smart drinking water prediction and energy-saving cooler control system for school campuses. By combining feels-like Apparent Temperature and school timetable student footfall with a dual-quantile CatBoost model, the system achieves an MAE of $0.913$\,liters and a $90.97\%$ shortage prevention rate. Concurrently, implementing Indian Standard IS~1475:2024 cooling setpoints cuts cooler electricity consumption by $34.2\%$. The system is open-source, responds in under $2$\,milliseconds, and provides a reproducible blueprint for smart, sustainable school water infrastructure.
+This paper presented \textit{PaniPahara}, a simulation-driven architectural framework and pre-deployment benchmark for smart drinking water demand prediction and energy-efficient cooler control on school campuses. Modeled after the 8-cooler layout and official timetable of PM SHRI Kendriya Vidyalaya No 1 IIT Kharagpur, the system was evaluated on a physics-informed synthetic benchmark of 2,160 period records combining real Open-Meteo weather and student footfall dynamics. The dual-quantile CatBoost model achieves a Mean Absolute Error of $0.913$\,liters and a $90.97\%$ shortage prevention rate. Concurrently, dynamic cooling setpoints based on IS~1475:2024 demonstrate a $34.2\%$ electricity saving in thermodynamic simulations. The software microservice responds in under $1.5$\,milliseconds and is open-sourced alongside a detailed hardware implementation roadmap, offering an ethical, cost-effective blueprint for sustainable school water infrastructure.
 
 \balance
 
