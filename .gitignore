@@ -10,7 +10,6 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
-artifacts/models/*.cbm
 artifacts/*.json
 *.log
 .DS_Store
